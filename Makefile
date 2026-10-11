@@ -1,10 +1,10 @@
 CC = gcc
 CFLAGS = -O2 -Wall -Wextra -municode -mwindows -Iinclude
-LDFLAGS = -lbcrypt -lcomctl32 -lshell32 -lole32 -lshlwapi
+LDFLAGS = -lbcrypt -lcomctl32 -lshell32 -lole32 -loleaut32 -luuid -lshlwapi
 WINDRES = windres
 
 TARGET = win10_file_enc.exe
-SRCS = src/main.c src/crypto.c src/scanner.c src/shredder.c src/renamer.c src/ui.c
+SRCS = src/main.c src/crypto.c src/vault.c src/scanner.c src/shredder.c src/renamer.c src/i18n.c src/service.c src/ui.c
 OBJS = $(SRCS:.c=.o)
 RC_SRC = src/resources.rc
 RC_OBJ = src/resources.o

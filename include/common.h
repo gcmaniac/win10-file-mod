@@ -59,9 +59,7 @@ typedef struct {
     wchar_t folder_path[MAX_PATH * 2];
     bool recursive;
     int cipher_id;
-    wchar_t password[256];
-    bool use_custom_salt;
-    wchar_t custom_salt[128];
+    wchar_t email[256]; /* Registered email used for file encryption */
     OperationMode op_mode;
 } JobConfig;
 

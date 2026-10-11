@@ -47,13 +47,13 @@ int wmain(void) {
     create_dummy_file(test_src, sample_data, strlen(sample_data));
     wprintf(L"[PASS] Dummy test file created.\n");
 
-    /* 4. Derive key from password */
-    const wchar_t *password = L"SecretPassword2026!";
+    /* 4. Derive key solely from email (PBKDF2-HMAC-SHA256, 100,000 iterations) */
+    const wchar_t *email = L"user@example.com";
     uint8_t file_salt[SALT_SIZE];
     crypto_generate_random(file_salt, sizeof(file_salt));
     uint8_t key[KEY_SIZE_AES256];
-    assert(crypto_derive_key(password, NULL, file_salt, sizeof(file_salt), key) == true);
-    wprintf(L"[PASS] PBKDF2-HMAC-SHA256 key derivation (100,000 iterations).\n");
+    assert(crypto_derive_key(email, file_salt, sizeof(file_salt), key) == true);
+    wprintf(L"[PASS] PBKDF2-HMAC-SHA256 key derivation purely from email (100,000 iterations).\n");
 
     /* 5. Encrypt file */
     assert(crypto_encrypt_file(test_src, test_tmp, key, file_salt, CIPHER_AES_256_GCM, NULL, NULL, NULL) == true);
@@ -67,16 +67,15 @@ int wmain(void) {
     assert(GetFileAttributesW(test_enc) != INVALID_FILE_ATTRIBUTES);
     wprintf(L"[PASS] Multi-pass secure shredding & atomic file commit.\n");
 
-    /* 7. Verify Decryption with WRONG password fails */
-    uint8_t wrong_key[KEY_SIZE_AES256];
-    assert(crypto_derive_key(L"WrongPasswordHere!", NULL, file_salt, sizeof(file_salt), wrong_key) == true);
+    /* 7. Verify Decryption with WRONG email fails */
+    uint8_t wrong_email_key[KEY_SIZE_AES256];
+    assert(crypto_derive_key(L"attacker.email@domain.com", file_salt, sizeof(file_salt), wrong_email_key) == true);
     wchar_t out_path[MAX_PATH];
-    bool dec_wrong = crypto_decrypt_file(test_enc, NULL, wrong_key, out_path, MAX_PATH, NULL, NULL, NULL);
-    assert(dec_wrong == false);
-    wprintf(L"[PASS] Decryption with incorrect password correctly rejected (AEAD Auth Tag check failed).\n");
+    bool dec_wrong_email = crypto_decrypt_file(test_enc, NULL, wrong_email_key, out_path, MAX_PATH, NULL, NULL, NULL);
+    assert(dec_wrong_email == false);
+    wprintf(L"[PASS] Decryption with incorrect email correctly rejected (AEAD Auth Tag check failed).\n");
 
-    /* 8. Verify Decryption with CORRECT password succeeds */
-    /* Read header from test_enc to get actual stored salt */
+    /* 8. Verify Decryption with CORRECT email succeeds */
     HANDLE hEnc = CreateFileW(test_enc, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
     assert(hEnc != INVALID_HANDLE_VALUE);
     FileHeader hdr;
@@ -85,11 +84,11 @@ int wmain(void) {
     CloseHandle(hEnc);
 
     uint8_t correct_key[KEY_SIZE_AES256];
-    assert(crypto_derive_key(password, NULL, hdr.salt, sizeof(hdr.salt), correct_key) == true);
+    assert(crypto_derive_key(email, hdr.salt, sizeof(hdr.salt), correct_key) == true);
 
     bool dec_ok = crypto_decrypt_file(test_enc, NULL, correct_key, out_path, MAX_PATH, NULL, NULL, NULL);
     assert(dec_ok == true);
-    wprintf(L"[PASS] Decryption with correct password succeeded: %ls\n", out_path);
+    wprintf(L"[PASS] Decryption with correct email succeeded: %ls\n", out_path);
 
     /* 9. Verify decrypted content is byte-for-byte identical */
     char dec_buf[256] = {0};

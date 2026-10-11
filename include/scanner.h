@@ -20,6 +20,9 @@ FileList* scanner_create(void);
 /* Free FileList and all its allocated strings */
 void scanner_free(FileList *list);
 
+/* Add a file path manually to FileList */
+bool scanner_add_file(FileList *list, const wchar_t *path, uint64_t size);
+
 /* Scan directory for target files based on operation mode and recursive option */
 bool scanner_scan(
     const wchar_t *root_dir,

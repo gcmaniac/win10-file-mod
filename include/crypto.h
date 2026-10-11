@@ -16,10 +16,9 @@ void crypto_cleanup(void);
 /* Generate cryptographically secure random bytes */
 bool crypto_generate_random(uint8_t *buf, size_t len);
 
-/* Derive a 256-bit encryption key using PBKDF2-HMAC-SHA256 */
+/* Derive a 256-bit encryption key from email using PBKDF2-HMAC-SHA256 */
 bool crypto_derive_key(
-    const wchar_t *password,
-    const wchar_t *custom_salt,
+    const wchar_t *email,
     const uint8_t *file_salt,
     size_t salt_len,
     uint8_t *out_key

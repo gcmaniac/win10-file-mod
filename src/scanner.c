@@ -25,7 +25,7 @@ void scanner_free(FileList *list) {
     free(list);
 }
 
-static bool scanner_add_file(FileList *list, const wchar_t *path, uint64_t size) {
+bool scanner_add_file(FileList *list, const wchar_t *path, uint64_t size) {
     if (list->count >= list->capacity) {
         size_t new_cap = list->capacity * 2;
         wchar_t **new_paths = (wchar_t **)realloc(list->paths, sizeof(wchar_t *) * new_cap);

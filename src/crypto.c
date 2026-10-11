@@ -1,4 +1,5 @@
 #include "crypto.h"
+#include "vault.h"
 #include <shlwapi.h>
 
 static BCRYPT_ALG_HANDLE g_hHashAlg = NULL;
@@ -79,48 +80,45 @@ bool crypto_generate_random(uint8_t *buf, size_t len) {
 }
 
 bool crypto_derive_key(
-    const wchar_t *password,
-    const wchar_t *custom_salt,
+    const wchar_t *email,
     const uint8_t *file_salt,
     size_t salt_len,
     uint8_t *out_key
 ) {
-    if (!password || !file_salt || !out_key) return false;
+    if (!email || wcslen(email) == 0 || !out_key) return false;
     if (!g_hHashAlg && !crypto_init()) return false;
 
-    /* Combine password + custom salt into UTF-8 representation */
-    wchar_t combined_pass[512] = {0};
-    wcsncpy(combined_pass, password, 255);
-    if (custom_salt && wcslen(custom_salt) > 0) {
-        wcsncat(combined_pass, L"::", 2);
-        wcsncat(combined_pass, custom_salt, 250);
-    }
+    /* Email as secret passphrase for PBKDF2 */
+    char email_utf8[256] = {0};
+    int email_len = WideCharToMultiByte(CP_UTF8, 0, email, -1, email_utf8, sizeof(email_utf8) - 1, NULL, NULL);
+    if (email_len > 1) email_len -= 1;
+    else email_len = 0;
 
-    char pass_utf8[1024] = {0};
-    int pass_len = WideCharToMultiByte(CP_UTF8, 0, combined_pass, -1, pass_utf8, sizeof(pass_utf8) - 1, NULL, NULL);
-    SecureZeroMemory(combined_pass, sizeof(combined_pass));
+    if (email_len == 0) return false;
 
-    if (pass_len <= 1) {
-        /* Empty password */
-        pass_utf8[0] = '\0';
-        pass_len = 0;
-    } else {
-        pass_len -= 1; /* Exclude null terminator from byte count */
+    /* Effective per-file salt */
+    const uint8_t *effective_salt = file_salt;
+    ULONG effective_salt_len = (ULONG)salt_len;
+    uint8_t default_salt[SALT_SIZE] = "wenc_email_salt";
+
+    if (!effective_salt || effective_salt_len == 0) {
+        effective_salt = default_salt;
+        effective_salt_len = (ULONG)sizeof(default_salt);
     }
 
     NTSTATUS status = BCryptDeriveKeyPBKDF2(
         g_hHashAlg,
-        (PUCHAR)pass_utf8,
-        (ULONG)pass_len,
-        (PUCHAR)file_salt,
-        (ULONG)salt_len,
+        (PUCHAR)email_utf8,
+        (ULONG)email_len,
+        (PUCHAR)effective_salt,
+        effective_salt_len,
         PBKDF2_ITERATIONS,
         (PUCHAR)out_key,
         KEY_SIZE_AES256,
         0
     );
 
-    SecureZeroMemory(pass_utf8, sizeof(pass_utf8));
+    SecureZeroMemory(email_utf8, sizeof(email_utf8));
     return BCRYPT_SUCCESS(status);
 }
 
