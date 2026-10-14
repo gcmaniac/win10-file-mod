@@ -2234,14 +2234,41 @@ static void app_exit_completely(HWND hWnd) {
 /* Duplicate File Finder Functions                                           */
 /* ========================================================================= */
 
+static bool g_bUpdatingDupChecks = false;
+
+static void update_duplicate_list_checks(void) {
+    if (!g_hDupList) return;
+    g_bUpdatingDupChecks = true;
+    SendMessage(g_hDupList, WM_SETREDRAW, FALSE, 0);
+
+    int count = ListView_GetItemCount(g_hDupList);
+    for (int i = 0; i < count; i++) {
+        LVITEMW lvi = {0};
+        lvi.mask = LVIF_PARAM;
+        lvi.iItem = i;
+        if (ListView_GetItem(g_hDupList, &lvi) && lvi.lParam) {
+            DuplicateItem *pIt = (DuplicateItem *)lvi.lParam;
+            ListView_SetCheckState(g_hDupList, i, pIt->checked);
+        }
+    }
+
+    SendMessage(g_hDupList, WM_SETREDRAW, TRUE, 0);
+    InvalidateRect(g_hDupList, NULL, TRUE);
+    UpdateWindow(g_hDupList);
+    g_bUpdatingDupChecks = false;
+}
+
 static void populate_duplicate_listview(void) {
     if (!g_hDupList) return;
+    g_bUpdatingDupChecks = true;
     SendMessage(g_hDupList, WM_SETREDRAW, FALSE, 0);
     ListView_DeleteAllItems(g_hDupList);
 
     if (!g_pDupResults) {
         SendMessage(g_hDupList, WM_SETREDRAW, TRUE, 0);
         InvalidateRect(g_hDupList, NULL, TRUE);
+        UpdateWindow(g_hDupList);
+        g_bUpdatingDupChecks = false;
         return;
     }
 
@@ -2292,6 +2319,8 @@ static void populate_duplicate_listview(void) {
 
     SendMessage(g_hDupList, WM_SETREDRAW, TRUE, 0);
     InvalidateRect(g_hDupList, NULL, TRUE);
+    UpdateWindow(g_hDupList);
+    g_bUpdatingDupChecks = false;
 }
 
 static void duplicate_progress_callback(
@@ -3156,19 +3185,24 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                     handle_duplicate_context_menu(hWnd, pt.x, pt.y);
                     return 0;
                 } else if (lpnm->code == LVN_ITEMCHANGED) {
+                    if (g_bUpdatingDupChecks) return 0;
                     NMLISTVIEW *nmlv = (NMLISTVIEW *)lParam;
                     if ((nmlv->uNewState & LVIS_STATEIMAGEMASK) != (nmlv->uOldState & LVIS_STATEIMAGEMASK)) {
-                        BOOL checked = ListView_GetCheckState(g_hDupList, nmlv->iItem);
-                        LVITEMW lvi = {0};
-                        lvi.mask = LVIF_PARAM;
-                        lvi.iItem = nmlv->iItem;
-                        if (ListView_GetItem(g_hDupList, &lvi) && lvi.lParam) {
-                            DuplicateItem *pIt = (DuplicateItem *)lvi.lParam;
-                            if (pIt) {
-                                pIt->checked = (checked != FALSE);
+                        int state = (nmlv->uNewState & LVIS_STATEIMAGEMASK) >> 12;
+                        if (state == 1 || state == 2) {
+                            bool is_checked = (state == 2);
+                            LVITEMW lvi = {0};
+                            lvi.mask = LVIF_PARAM;
+                            lvi.iItem = nmlv->iItem;
+                            if (ListView_GetItem(g_hDupList, &lvi) && lvi.lParam) {
+                                DuplicateItem *pIt = (DuplicateItem *)lvi.lParam;
+                                if (pIt) {
+                                    pIt->checked = is_checked;
+                                }
                             }
                         }
                     }
+                    return 0;
                 }
             }
             break;
@@ -3379,7 +3413,7 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             } else if (wmId == IDC_DUP_BTN_AUTOSEL && wmEvent == BN_CLICKED) {
                 if (g_pDupResults) {
                     duplicate_auto_select_copies(g_pDupResults);
-                    populate_duplicate_listview();
+                    update_duplicate_list_checks();
                 }
             } else if (wmId == IDC_DUP_BTN_SEL_ALL && wmEvent == BN_CLICKED) {
                 if (g_pDupResults) {
@@ -3388,7 +3422,7 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                             it->checked = true;
                         }
                     }
-                    populate_duplicate_listview();
+                    update_duplicate_list_checks();
                 }
             } else if (wmId == IDC_DUP_BTN_DESEL_ALL && wmEvent == BN_CLICKED) {
                 if (g_pDupResults) {
@@ -3397,7 +3431,7 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                             it->checked = false;
                         }
                     }
-                    populate_duplicate_listview();
+                    update_duplicate_list_checks();
                 }
             } else if (wmId == IDC_DUP_BTN_DELETE && wmEvent == BN_CLICKED) {
                 delete_selected_duplicates(hWnd);
@@ -3645,9 +3679,13 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             }
 
             /* Hide window and show icon in taskbar / system tray.
-             * All ongoing processes across all pages continue in the background. */
+             * All ongoing processes across all pages continue in the background.
+             * Show balloon notification only once upon first close after start. */
             ShowWindow(hWnd, SW_HIDE);
-            show_main_tray_icon(hWnd, true);
+            static bool s_bCloseBalloonShown = false;
+            bool showBalloon = !s_bCloseBalloonShown;
+            show_main_tray_icon(hWnd, showBalloon);
+            s_bCloseBalloonShown = true;
             return 0;
         }
 
