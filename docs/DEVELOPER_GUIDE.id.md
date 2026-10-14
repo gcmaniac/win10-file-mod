@@ -322,14 +322,17 @@ if (GetLastError() == ERROR_ALREADY_EXISTS) {
 }
 ```
 
-### Siklus Penutupan Bersih Jendela (`WM_CLOSE`)
+### Siklus Hide to Taskbar & Pemrosesan Latar Belakang (`WM_CLOSE`)
 Ketika pengguna menekan tombol tutup window ([X] / Close) atau shortcut `Alt+F4`:
-- Jendela memanggil `app_exit_completely(hWnd)` secara langsung:
-  - Menyimpan status konfigurasi aplikasi (folder terakhir, preferensi bahasa).
-  - Memanggil `tracker_encrypt_all_decrypted_files()` untuk mengenkripsi kembali seluruh berkas terbuka menjadi `.enc` dan menghancurkan berkas plaintext (*secure shredding*).
-  - Menghapus ikon notification area tray utama melalui `show_main_tray_icon(hWnd, false)`.
-  - Memanggil `DestroyWindow(hWnd)` dan `PostQuitMessage(0)`.
-- Arsitektur ini memastikan **tidak ada ikon tray duplikat** di taskbar notification area, serta menjaga proses GUI tertutup bersih sementara daemon `--service` tetap dapat berjalan mandiri.
+- Pesan `WM_CLOSE` di-intercept: aplikasi **TIDAK menghentikan thread atau proses** (`g_bCancelRequested` dan `g_bDupCancel` tidak dipicu).
+- Pengaturan folder terakhir disimpan, lalu jendela disembunyikan menggunakan `ShowWindow(hWnd, SW_HIDE)`.
+- Ikon area notifikasi taskbar diaktifkan melalui `show_main_tray_icon(hWnd, true)`.
+- Jika terdapat proses yang sedang berjalan (`g_bIsWorking == true`), notifikasi balon otomatis ditampilkan untuk memberi tahu pengguna bahwa aplikasi tetap aktif dan proses diteruskan di latar belakang.
+- **Perutean Notifikasi Selesai**: Saat pesan `WM_APP_FINISHED`, `WM_APP_REN_FINISHED`, atau `WM_APP_DUP_FINISHED` diterima oleh loop pesan, aplikasi memeriksa flag `g_bMainTrayActive`. Jika jendela sedang tersembunyi di tray, aplikasi menampilkan notifikasi balon melalui `Shell_NotifyIconW(NIM_MODIFY, &nid)` tanpa memanggil `MessageBoxW` modal yang dapat memblokir eksekusi.
+- **Keluar Sepenuhnya (`app_exit_completely`)**:
+  Penghentian aplikasi secara tuntas hanya terjadi bila pengguna memilih *Berkas ➔ Keluar* (`IDM_FILE_EXIT`) atau klik kanan ikon tray *Keluar Sepenuhnya* (`ID_MAINTRAY_EXIT`). Prosedur ini mengamankan seluruh berkas terbuka via `tracker_encrypt_all_decrypted_files()`, menghapus ikon tray, dan memanggil `DestroyWindow(hWnd)`.
+- **Deduplikasi Ikon Taskbar**:
+  Layanan background daemon (`service.c`) secara rutin memeriksa keberadaan jendela utama menggunakan `FindWindowW(L"Win10FileModMainClass", NULL)`. Jika jendela utama terdeteksi aktif, daemon menekan atau menghapus ikonnya sendiri sehingga tidak pernah muncul dua ikon di taskbar.
 
 ### Pengurutan Kustom ListView & Panah Header
 - **Notifikasi Klik Kolom**: Ditangkap melalui kode notifikasi `LVN_COLUMNCLICK` dalam `WM_NOTIFY`.

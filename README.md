@@ -56,10 +56,12 @@ Everything compiles to a standalone, zero-dependency executable linking directly
 - **Crash & Reboot Reconciliation**: Upon launch or reboot, any leftover decrypted files from unexpected shutdowns are automatically identified and re-encrypted before user interaction.
 - **Full Exit Protection**: Closing the application completely immediately re-encrypts all open decrypted files.
 
-### 5. 🛡️ Strict Single Instance & Clean Window Exit
+### 5. 🛡️ Strict Single Instance & Hide to Taskbar (Background Processing)
 - **Single Instance Enforcement**: Uses a named Windows Mutex (`Win10FileMod_App_SingleInstance_Mutex`) to ensure strictly one application instance runs at a time.
-- **Auto Window Restoration**: If a second instance is launched, the existing window is automatically restored and brought to the foreground.
-- **Clean Taskbar Exit (No Duplicate Icons)**: Closing the main window ([X] / Close) cleanly terminates the GUI and removes its tray icon, preventing duplicate tray icon clutter in the taskbar notification area while allowing the background daemon service to operate independently if registered.
+- **Auto Window Restoration**: If a second instance is launched or the app is reopened, the existing window is automatically restored and brought to the foreground without launching redundant processes.
+- **Hide to Taskbar & Background Continuation**: Clicking the window Close button ([X]) minimizes/hides the window to the Windows taskbar notification area (System Tray) via `SW_HIDE`. All active tasks across all tabs (encryption, decryption, duplicate scan/hashing, bulk renaming, and the 30-minute inactivity monitor) remain fully active and continue running in the background without interruption.
+- **Duplicate Tray Icon Prevention**: Intelligent synchronization with background daemon services suppresses duplicate tray icons, keeping the notification area clean.
+- **Complete Application Exit**: To exit completely, choose *File ➔ Exit* from the menu bar or right-click the notification tray icon and select *Exit Completely*.
 
 ### 6. ⚙️ Background Service & Shell Integration
 - **Explorer Folder Auto-Decryption**: Background monitor (`IShellWindows` COM) detects navigation to protected folders in Windows Explorer and auto-decrypts them seamlessly.

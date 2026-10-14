@@ -35,6 +35,7 @@ static HANDLE g_hStopEvent = NULL;
 static HANDLE g_hMonitorThread = NULL;
 static HWND g_hServiceWnd = NULL;
 static NOTIFYICONDATAW g_nid = {0};
+static bool g_bServiceTrayActive = false;
 static bool g_bAutoDecryptActive = true;
 
 /* ------------------------------------------------------------------------- */
@@ -610,6 +611,16 @@ static DWORD WINAPI explorer_monitor_thread(LPVOID lpParam) {
     CoInitialize(NULL);
 
     while (WaitForSingleObject(g_hStopEvent, 750) == WAIT_TIMEOUT) {
+        /* Ensure service does not display a duplicate tray icon while GUI is active */
+        bool bGuiActive = (FindWindowW(L"Win10FileModMainClass", NULL) != NULL);
+        if (bGuiActive && g_bServiceTrayActive) {
+            Shell_NotifyIconW(NIM_DELETE, &g_nid);
+            g_bServiceTrayActive = false;
+        } else if (!bGuiActive && !g_bServiceTrayActive) {
+            Shell_NotifyIconW(NIM_ADD, &g_nid);
+            g_bServiceTrayActive = true;
+        }
+
         if (!g_bAutoDecryptActive) continue;
 
         IShellWindows *psw = NULL;
@@ -805,7 +816,12 @@ int service_run_daemon(HINSTANCE hInstance) {
     g_nid.uCallbackMessage = WM_APP_TRAYMSG;
     g_nid.hIcon = hIcon;
     wcsncpy(g_nid.szTip, L"Win10 File Protection & Auto-Decrypt Service", 127);
-    Shell_NotifyIconW(NIM_ADD, &g_nid);
+    if (!FindWindowW(L"Win10FileModMainClass", NULL)) {
+        Shell_NotifyIconW(NIM_ADD, &g_nid);
+        g_bServiceTrayActive = true;
+    } else {
+        g_bServiceTrayActive = false;
+    }
 
     /* Start Explorer Window Monitoring Thread */
     g_hStopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
@@ -830,7 +846,10 @@ int service_run_daemon(HINSTANCE hInstance) {
         g_hStopEvent = NULL;
     }
 
-    Shell_NotifyIconW(NIM_DELETE, &g_nid);
+    if (g_bServiceTrayActive) {
+        Shell_NotifyIconW(NIM_DELETE, &g_nid);
+        g_bServiceTrayActive = false;
+    }
     DestroyWindow(g_hServiceWnd);
     UnregisterClassW(SERVICE_WINDOW_CLASS, hInstance);
 

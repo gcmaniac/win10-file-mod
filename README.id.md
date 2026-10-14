@@ -56,10 +56,12 @@ Semua modul dikompilasi menjadi satu berkas biner mandiri yang sangat ringan tan
 - **Rekonsiliasi Startup & Reboot**: Saat aplikasi dinyalakan kembali setelah crash atau restart sistem operasi, seluruh berkas terbuka yang tertinggal akan otomatis diidentifikasi dan langsung dienkripsi sebelum pengguna dapat mengaksesnya.
 - **Perlindungan Penutupan Penuh**: Menutup aplikasi secara tuntas akan mengenkripsi seluruh berkas yang masih terbuka di sistem.
 
-### 5. 🛡️ Penegakan Instansi Tunggal (Strict Single Instance) & Penutupan Bersih
+### 5. 🛡️ Penegakan Instansi Tunggal & Hide to Taskbar (Latar Belakang)
 - **Proteksi Instansi Tunggal**: Memanfaatkan Windows Named Mutex (`Win10FileMod_App_SingleInstance_Mutex`) untuk memastikan hanya ada tepat 1 instansi jendela aplikasi yang berjalan.
-- **Fokus Otomatis Jendela**: Jika pengguna membuka kembali aplikasi, jendela yang sudah berjalan otomatis dipulihkan (*restored*) dan difokuskan ke depan layar.
-- **Penutupan Bersih Tanpa Ikon Ganda**: Menutup jendela ([X] / Close) keluar dari antarmuka secara tuntas dan membersihkan ikon tray, mencegah penumpukan ikon ganda pada taskbar notification area, sementara background daemon service tetap berjalan mandiri jika diaktifkan.
+- **Fokus Otomatis Jendela**: Jika pengguna membuka kembali aplikasi saat terminimalkan atau tersembunyi di tray, jendela yang sudah berjalan otomatis dipulihkan (*restored*) dan difokuskan ke depan layar tanpa membuat proses baru.
+- **Hide to Taskbar & Proses Berlanjut**: Mengklik tombol Close ([X]) menyembunyikan jendela ke notification area taskbar system tray (`SW_HIDE`). Seluruh proses di semua halaman (enkripsi, dekripsi, pemindaian/hashing duplikat, rename, dan pemantau inaktivitas 30 menit) tetap aktif dan diteruskan di latar belakang.
+- **Bebas Ikon Ganda**: Mekanisme sinkronisasi cerdas dengan background daemon memastikan area notifikasi taskbar tetap rapi tanpa penumpukan ikon ganda.
+- **Keluar Sepenuhnya**: Menutup aplikasi secara tuntas dapat dilakukan kapan saja melalui menu *Berkas ➔ Keluar* atau klik kanan ikon tray *Keluar Sepenuhnya*.
 
 ### 6. ⚙️ Layanan Latar Belakang & Integrasi Shell
 - **Dekripsi Otomatis Folder Explorer**: Layanan pemantau latar belakang (`IShellWindows` COM) mendeteksi saat pengguna membuka folder terenkripsi di File Explorer Windows dan mendekripsinya secara otomatis.

@@ -123,9 +123,9 @@ Klik pada header kolom mana saja untuk mengurutkan daftar secara instan:
 
 ---
 
-## 5. Auto-Lock 30 Menit, Proteksi Instansi Tunggal & Penutupan
+## 5. Auto-Lock 30 Menit, Proteksi Instansi Tunggal & Hide to Taskbar (Latar Belakang)
 
-Untuk menjaga kerahasiaan data di memori dan disk, aplikasi menerapkan sistem pengamanan berlapis otomatis:
+Untuk menjaga kerahasiaan data di memori dan disk, serta kenyamanan multitasking pengguna, aplikasi menerapkan sistem pengamanan dan manajemen jendela otomatis:
 
 ### Kunci Otomatis Inaktivitas 30 Menit
 - Setiap berkas yang didekripsi dicatat ke dalam **Decrypted File Tracker**.
@@ -139,14 +139,28 @@ Untuk menjaga kerahasiaan data di memori dan disk, aplikasi menerapkan sistem pe
 ### Proteksi Instansi Tunggal (Strict Single Instance)
 - Aplikasi dilindungi secara ketat oleh **Windows Named Mutex** (`Win10FileMod_App_SingleInstance_Mutex`).
 - Sistem memastikan hanya ada **tepat 1 instansi jendela** dari program ini yang berjalan bersamaan.
-- Jika Anda meluncurkan kembali `win10_file_enc.exe` saat program sudah berjalan:
-  - Jendela yang sedang aktif otomatis dipulihkan (*restored*) dari kondisi terminimalkan/tersembunyi dan langsung dibawa ke baris terdepan layar pengguna.
-  - Proses kedua langsung berhenti tanpa menimbulkan duplikasi aplikasi di memori.
+- Jika Anda meluncurkan kembali `win10_file_enc.exe` saat program sudah berjalan atau sedang tersembunyi di tray:
+  - Jendela yang sedang aktif otomatis dipulihkan (*restored*) dan langsung dibawa ke baris terdepan layar pengguna.
+  - Proses kedua langsung berhenti tanpa menimbulkan duplikasi aplikasi di memori atau ikon ganda di taskbar.
 
-### Penutupan Bersih Jendela (Bebas Ikon Ganda)
-- Menekan tombol **Close (X)** pada judul jendela atau shortcut `Alt+F4` akan **menutup antarmuka grafis aplikasi secara tuntas** dan **membersihkan ikon tray utama**.
-- Desain ini secara tuntas menyelesaikan masalah penumpukan 2 ikon perisai di taskbar notification area, sehingga tray hanya menampilkan ikon daemon background jika service aktif.
-- **Keamanan Penutupan Penuh**: Saat antarmuka ditutup, seluruh berkas yang masih dalam status didekripsi akan **otomatis dienkripsi kembali ke format `.enc`** dan salinan plaintext-nya dihancurkan secara permanen.
+### Hide to Taskbar & Proses Berlanjut di Latar Belakang
+- Menekan tombol **Close ([X])** pada judul jendela atau shortcut `Alt+F4` **TIDAK menghentikan atau membatalkan pekerjaan yang sedang berjalan**.
+- Jendela aplikasi otomatis disembunyikan ke area notifikasi taskbar (System Tray) menggunakan `SW_HIDE`.
+- **Seluruh proses di semua halaman diteruskan di latar belakang**:
+  - **Enkripsi & Dekripsi Massal** di Tab Encrypt Explorer tetap berjalan sampai selesai.
+  - **Pemindaian Duplikat & Penghitungan Hash SHA-256** di Tab Duplicate File Finder tetap memproses berkas tanpa henti.
+  - **Proses Bulk Renaming** di Tab Bulk File Renamer tetap dieksekusi.
+  - **Pelacak Inaktivitas 30 Menit (Auto-Lock)** tetap aktif memantau berkas terbuka.
+- **Notifikasi Balon (Balloon Notification)**:
+  - Saat jendela disembunyikan saat ada proses aktif, notifikasi balon muncul mengonfirmasi bahwa aplikasi dan pekerjaannya tetap berjalan di latar belakang.
+  - Saat suatu proses selesai (enkripsi, dekripsi, pemindaian duplikat, atau rename), aplikasi menampilkan notifikasi balon di system tray tanpa memunculkan kotak dialog modal yang memblokir kerja Anda.
+- **Membuka Kembali Jendela**:
+  - Klik ganda (double-click) pada ikon perisai di taskbar notification area, atau jalankan kembali `win10_file_enc.exe`. Jendela akan langsung tampil kembali dengan status progres terkini.
+- **Keluar Sepenuhnya (Complete Exit)**:
+  - Jika Anda benar-benar ingin keluar tuntas dari aplikasi:
+    1. Pilih menu **Berkas ➔ Keluar** (`File ➔ Exit`).
+    2. Atau klik kanan ikon perisai di system tray, lalu pilih **Keluar Sepenuhnya** (`Exit Completely`).
+  - Saat keluar sepenuhnya, seluruh berkas terbuka akan otomatis dienkripsi kembali ke format `.enc` dan salinannya dihancurkan (*shredded*).
 
 ### Pemulihan Otomatis Saat Restart atau Crash
 Jika komputer mengalami restart tiba-tiba, pemadaman listrik, atau crash:

@@ -322,14 +322,17 @@ if (GetLastError() == ERROR_ALREADY_EXISTS) {
 }
 ```
 
-### Clean Window Close Lifecycle (`WM_CLOSE`)
-When the user closes the main window ([X] / Close) or presses `Alt+F4`:
-- The window procedure directly calls `app_exit_completely(hWnd)`:
-  - Persists application settings (last directory, language preference).
-  - Invokes `tracker_encrypt_all_decrypted_files()` to re-encrypt any active decrypted files to `.enc` and shreds their plaintext versions.
-  - Removes the main tray notification icon via `show_main_tray_icon(hWnd, false)`.
-  - Calls `DestroyWindow(hWnd)` and `PostQuitMessage(0)`.
-- This ensures **no duplicate tray icons** linger in the Windows notification area, cleanly terminating the GUI while allowing the background daemon service (`--service`) to run independently.
+### Hide to Taskbar & Background Processing Lifecycle (`WM_CLOSE`)
+When the user clicks the window close button ([X] / Close) or presses `Alt+F4`:
+- The `WM_CLOSE` message is intercepted: the application **DOES NOT cancel any worker threads or active operations** (`g_bCancelRequested` and `g_bDupCancel` are not signaled).
+- User interface settings (last visited folder, language selection) are persisted, and the main window is hidden via `ShowWindow(hWnd, SW_HIDE)`.
+- The notification area tray icon is activated via `show_main_tray_icon(hWnd, true)`.
+- If an operation is actively executing (`g_bIsWorking == true`), an immediate balloon notification is dispatched alerting the user that tasks are continuing uninterrupted in the background.
+- **Completion Notification Routing**: When `WM_APP_FINISHED`, `WM_APP_REN_FINISHED`, or `WM_APP_DUP_FINISHED` arrives at the window procedure, the handler checks `g_bMainTrayActive`. If the window is hidden in the tray, it routes completion details to a balloon notification (`Shell_NotifyIconW(NIM_MODIFY, &nid)`) rather than invoking a blocking modal `MessageBoxW`.
+- **Complete Application Exit (`app_exit_completely`)**:
+  Total application termination is strictly executed when the user invokes *File ➔ Exit* (`IDM_FILE_EXIT`) or selects *Exit Completely* (`ID_MAINTRAY_EXIT`) from the tray context menu. This invokes `tracker_encrypt_all_decrypted_files()`, deletes the tray icon, and destroys the window.
+- **Taskbar Icon Deduplication**:
+  The background daemon service in `service.c` periodically queries `FindWindowW(L"Win10FileModMainClass", NULL)`. If the main window is alive, the service suppresses or deletes its tray icon to prevent duplicate icons in the notification area.
 
 ### ListView Custom Sorting & Visual Headers
 - **Column Header Notification**: Handled via `LVN_COLUMNCLICK` in `WM_NOTIFY`.

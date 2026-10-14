@@ -2168,7 +2168,14 @@ static void show_main_tray_icon(HWND hWnd, bool showBalloon) {
         nid.uFlags = NIF_INFO;
         nid.dwInfoFlags = NIIF_INFO;
         wcsncpy(nid.szInfoTitle, i18n_get(STR_TRAY_BALLOON_TITLE), 63);
-        wcsncpy(nid.szInfo, i18n_get(STR_TRAY_BALLOON_MSG), 255);
+        if (g_bIsWorking) {
+            bool is_id = (i18n_get_language() == LANG_ID);
+            wcsncpy(nid.szInfo, is_id ?
+                L"Aplikasi tetap aktif di latar belakang. Proses yang sedang berjalan tetap diteruskan.\nKlik dua kali ikon ini untuk membuka kembali." :
+                L"Application remains active in the background. Ongoing process continues running.\nDouble-click this icon to restore.", 255);
+        } else {
+            wcsncpy(nid.szInfo, i18n_get(STR_TRAY_BALLOON_MSG), 255);
+        }
         Shell_NotifyIconW(NIM_MODIFY, &nid);
     }
 }
@@ -3449,7 +3456,19 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             } else {
                 swprintf(done_msg, 512, L"Encryption process completed.\n\nSuccessfully encrypted & shredded: %zu files\nFailed / Skipped: %zu files", success_count, fail_count);
             }
-            MessageBoxW(hWnd, done_msg, is_id ? L"Informasi" : L"Information", MB_OK | MB_ICONINFORMATION);
+            if (g_bMainTrayActive) {
+                NOTIFYICONDATAW nid = {0};
+                nid.cbSize = sizeof(NOTIFYICONDATAW);
+                nid.hWnd = hWnd;
+                nid.uID = 100;
+                nid.uFlags = NIF_INFO;
+                nid.dwInfoFlags = NIIF_INFO;
+                wcsncpy(nid.szInfoTitle, i18n_get(STR_APP_TITLE), 63);
+                wcsncpy(nid.szInfo, status_txt, 255);
+                Shell_NotifyIconW(NIM_MODIFY, &nid);
+            } else {
+                MessageBoxW(hWnd, done_msg, is_id ? L"Informasi" : L"Information", MB_OK | MB_ICONINFORMATION);
+            }
             break;
         }
 
@@ -3464,9 +3483,22 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             populate_renamer_listview();
             bool is_id = (i18n_get_language() == LANG_ID);
             SetWindowTextW(g_hRenStaticStatus, is_id ? L"Batch Rename Selesai!" : L"Batch Rename Complete!");
-            MessageBoxW(hWnd,
-                is_id ? L"Proses Batch Rename berhasil selesai!" : L"Batch rename operation completed successfully!",
-                is_id ? L"Informasi" : L"Information", MB_OK | MB_ICONINFORMATION);
+
+            if (g_bMainTrayActive) {
+                NOTIFYICONDATAW nid = {0};
+                nid.cbSize = sizeof(NOTIFYICONDATAW);
+                nid.hWnd = hWnd;
+                nid.uID = 100;
+                nid.uFlags = NIF_INFO;
+                nid.dwInfoFlags = NIIF_INFO;
+                wcsncpy(nid.szInfoTitle, i18n_get(STR_APP_TITLE), 63);
+                wcsncpy(nid.szInfo, is_id ? L"Proses Batch Rename berhasil selesai!" : L"Batch rename operation completed successfully!", 255);
+                Shell_NotifyIconW(NIM_MODIFY, &nid);
+            } else {
+                MessageBoxW(hWnd,
+                    is_id ? L"Proses Batch Rename berhasil selesai!" : L"Batch rename operation completed successfully!",
+                    is_id ? L"Informasi" : L"Information", MB_OK | MB_ICONINFORMATION);
+            }
             break;
         }
 
@@ -3517,8 +3549,31 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                     swprintf(status_msg, 512, i18n_get(STR_DUP_STATUS_FOUND),
                         g_pDupResults->total_duplicates, g_pDupResults->group_count, size_str);
                     SetWindowTextW(g_hDupStaticStatus, status_msg);
+
+                    if (g_bMainTrayActive) {
+                        NOTIFYICONDATAW nid = {0};
+                        nid.cbSize = sizeof(NOTIFYICONDATAW);
+                        nid.hWnd = hWnd;
+                        nid.uID = 100;
+                        nid.uFlags = NIF_INFO;
+                        nid.dwInfoFlags = NIIF_INFO;
+                        wcsncpy(nid.szInfoTitle, i18n_get(STR_APP_TITLE), 63);
+                        wcsncpy(nid.szInfo, status_msg, 255);
+                        Shell_NotifyIconW(NIM_MODIFY, &nid);
+                    }
                 } else {
                     SetWindowTextW(g_hDupStaticStatus, i18n_get(STR_DUP_STATUS_NONE));
+                    if (g_bMainTrayActive) {
+                        NOTIFYICONDATAW nid = {0};
+                        nid.cbSize = sizeof(NOTIFYICONDATAW);
+                        nid.hWnd = hWnd;
+                        nid.uID = 100;
+                        nid.uFlags = NIF_INFO;
+                        nid.dwInfoFlags = NIIF_INFO;
+                        wcsncpy(nid.szInfoTitle, i18n_get(STR_APP_TITLE), 63);
+                        wcsncpy(nid.szInfo, i18n_get(STR_DUP_STATUS_NONE), 255);
+                        Shell_NotifyIconW(NIM_MODIFY, &nid);
+                    }
                 }
             }
             return 0;
@@ -3573,7 +3628,26 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         }
 
         case WM_CLOSE: {
-            app_exit_completely(hWnd);
+            if (g_bRememberFolder) {
+                wchar_t current_folder[MAX_PATH * 2] = {0};
+                GetWindowTextW(g_hEditFolder, current_folder, MAX_PATH * 2);
+                if (wcslen(current_folder) == 0 && g_hRenEditFolder) {
+                    GetWindowTextW(g_hRenEditFolder, current_folder, MAX_PATH * 2);
+                }
+                if (wcslen(current_folder) == 0 && g_hDupEditFolder) {
+                    GetWindowTextW(g_hDupEditFolder, current_folder, MAX_PATH * 2);
+                }
+                wchar_t clean[MAX_PATH * 2] = {0};
+                sanitize_path(current_folder, clean, MAX_PATH * 2);
+                if (clean[0] != L'\0') {
+                    save_settings(clean);
+                }
+            }
+
+            /* Hide window and show icon in taskbar / system tray.
+             * All ongoing processes across all pages continue in the background. */
+            ShowWindow(hWnd, SW_HIDE);
+            show_main_tray_icon(hWnd, true);
             return 0;
         }
 

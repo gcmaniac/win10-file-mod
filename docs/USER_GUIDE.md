@@ -123,9 +123,9 @@ Click any column header to sort items immediately:
 
 ---
 
-## 5. Inactivity Auto-Lock, Single Instance & Clean Exit
+## 5. Inactivity Auto-Lock, Single Instance & Hide to Taskbar (Background Processing)
 
-To prevent sensitive plaintext data from lingering on disk, the application enforces automated multi-layered re-encryption:
+To safeguard sensitive data both in memory and on disk, while ensuring an uninterrupted multitasking experience, the application enforces automated multi-layered protections:
 
 ### 30-Minute Inactivity Auto-Lock
 - Any file opened or decrypted enters the **Decrypted File Tracker**.
@@ -139,14 +139,28 @@ To prevent sensitive plaintext data from lingering on disk, the application enfo
 ### Strict Single Instance Protection
 - The application is protected by a system-wide **Windows Named Mutex** (`Win10FileMod_App_SingleInstance_Mutex`).
 - Exactly **one application window** is allowed to run at any time.
-- If you launch `win10_file_enc.exe` while the program is already active:
-  - The running instance automatically restores itself (if minimized) and is brought to the foreground.
-  - The second instance exits cleanly and immediately, preventing duplicate memory usage and tracker collisions.
+- If you launch `win10_file_enc.exe` while the program is already active or hidden in the notification area:
+  - The running instance automatically restores itself and is brought to the foreground immediately.
+  - The second instance exits cleanly and immediately, preventing duplicate memory usage and tray icon clutter.
 
-### Clean Window Exit (No Duplicate Tray Icons)
-- Clicking the window close button (**X**) or pressing `Alt+F4` **cleanly terminates the GUI window and removes its tray icon**.
-- This guarantees no duplicate tray icons accumulate in the Windows taskbar notification area, leaving only the background daemon icon if the service is running.
-- **Full Exit Encryption**: Before the GUI closes, all files currently tracked in the decrypted state are **immediately re-encrypted to `.enc`** and their plaintext versions are shredded permanently.
+### Hide to Taskbar & Background Continuation
+- Clicking the window close button (**[X]**) or pressing `Alt+F4` **DOES NOT cancel or abort active tasks**.
+- The main window is automatically hidden to the Windows taskbar notification area (System Tray) using `SW_HIDE`.
+- **All processes across all tabs continue executing seamlessly in the background**:
+  - **Batch Encryption & Decryption** in Encrypt Explorer runs to completion.
+  - **Duplicate Scanning & SHA-256 Hashing** in Duplicate File Finder continues uninterrupted.
+  - **Bulk Renaming** operations in Bulk File Renamer execute until finished.
+  - **30-Minute Inactivity Tracker (Auto-Lock)** remains active safeguarding open files.
+- **Balloon Notifications**:
+  - When the window is hidden while tasks are running, a balloon notification confirms that operations are proceeding in the background.
+  - When any task completes (encryption, decryption, duplicate scan, or rename), a native balloon notification pops up over the tray without disruptive modal message dialogs.
+- **Restoring the Window**:
+  - Double-click the shield icon in the taskbar notification area, or re-launch `win10_file_enc.exe`. The window immediately reappears with up-to-date progress.
+- **Complete Application Exit**:
+  - To truly close and shut down the application:
+    1. Select **File ➔ Exit** (`Berkas ➔ Keluar`) from the menu bar.
+    2. Or right-click the notification tray icon and choose **Exit Completely** (`Keluar Sepenuhnya`).
+  - Upon full exit, all tracked plaintext files are securely re-encrypted back to `.enc` and their plaintext remnants shredded.
 
 ### Startup Crash & Reboot Recovery
 If your computer experiences a sudden reboot, power outage, or system crash:
