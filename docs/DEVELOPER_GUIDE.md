@@ -11,34 +11,40 @@ Welcome to the **Win10 File Encryptor & Bulk Renamer** Developer Guide. This tec
 ## Table of Contents
 1. [Architecture & Design Principles](#1-architecture--design-principles)
 2. [Source Code Tree](#2-source-code-tree)
-3. [Cryptographic Subsystem (`crypto.c`, `crypto.h`)](#3-cryptographic-subsystem)
+3. [Cryptographic Subsystem (`crypto.c`, `crypto.h`)](#3-cryptographic-subsystem-cryptoc-cryptoh)
    - [Windows CNG & AES-256-GCM (AEAD)](#windows-cng--aes-256-gcm-aead)
    - [PBKDF2-HMAC-SHA256 Key Derivation](#pbkdf2-hmac-sha256-key-derivation)
    - [Header & Binary Container Format](#header--binary-container-format)
-4. [Security Vault Subsystem (`vault.c`, `vault.h`)](#4-security-vault-subsystem)
+4. [Security Vault Subsystem (`vault.c`, `vault.h`)](#4-security-vault-subsystem-vaultc-vaulth)
    - [DPAPI Protection](#dpapi-protection)
    - [Lockout & OTP Dispatch](#lockout--otp-dispatch)
-5. [Inactivity Tracker & Auto-Re-Encryption (`service.c`, `service.h`)](#5-inactivity-tracker--auto-re-encryption)
-   - [Persistent State Storage (`win10_file_enc_tracker.dat`)](#persistent-state-storage)
+5. [Inactivity Tracker & Auto-Re-Encryption (`service.c`, `service.h`)](#5-inactivity-tracker--auto-re-encryption-servicec-serviceh)
+   - [Persistent State Storage (`win10_file_enc_tracker.dat`)](#persistent-state-storage-win10_file_enc_trackerdat)
    - [30-Minute Inactivity Engine](#30-minute-inactivity-engine)
    - [Startup Crash & Reboot Reconciliation](#startup-crash--reboot-reconciliation)
    - [Graceful Shutdown Encryption](#graceful-shutdown-encryption)
-6. [Physical File Shredder Subsystem (`shredder.c`, `shredder.h`)](#6-physical-file-shredder-subsystem)
-7. [Bulk Renamer Engine (`renamer.c`, `renamer.h`)](#7-bulk-renamer-engine)
+6. [Physical File Shredder Subsystem (`shredder.c`, `shredder.h`)](#6-physical-file-shredder-subsystem-shredderc-shredderh)
+7. [Bulk Renamer Engine (`renamer.c`, `renamer.h`)](#7-bulk-renamer-engine-renamerc-renamerh)
    - [Method Pipeline & Tag Parser](#method-pipeline--tag-parser)
    - [Real-Time Collision Detection](#real-time-collision-detection)
    - [Multi-Step Undo Stack](#multi-step-undo-stack)
-8. [Win32 UI Architecture (`ui.c`, `ui.h`)](#8-win32-ui-architecture)
+8. [Duplicate File Finder Subsystem (`duplicate.c`, `duplicate.h`)](#8-duplicate-file-finder-subsystem-duplicatec-duplicateh)
+   - [2-Tier Detection Architecture (Size & SHA-256 Hash)](#2-tier-detection-architecture-size--sha-256-hash)
+   - [Data Structures & Cluster Grouping](#data-structures--cluster-grouping)
+   - [Auto-Select Duplicate Copies Logic](#auto-select-duplicate-copies-logic)
+   - [Safe Recycling via Windows Recycle Bin](#safe-recycling-via-windows-recycle-bin)
+9. [Win32 UI Architecture (`ui.c`, `ui.h`)](#9-win32-ui-architecture-uic-uih)
    - [Window Message Loop & Subclassing](#window-message-loop--subclassing)
+   - [Strict Single Instance Named Mutex](#strict-single-instance-named-mutex)
+   - [Clean Window Close Lifecycle (`WM_CLOSE`)](#clean-window-close-lifecycle-wm_close)
    - [ListView Custom Sorting & Visual Headers](#listview-custom-sorting--visual-headers)
-   - [Close-to-Tray (`WM_CLOSE` to `SW_HIDE`)](#close-to-tray-wm_close-to-sw_hide)
-9. [Windows Explorer Shell & Daemon Service](#9-windows-explorer-shell--daemon-service)
-   - [IShellWindows COM Monitoring](#ishellwindows-com-monitoring)
-   - [Registry File Associations](#registry-file-associations)
-10. [Internationalization Subsystem (`i18n.c`, `i18n.h`)](#10-internationalization-subsystem)
-11. [Build System & Automated Testing](#11-build-system--automated-testing)
-   - [GCC Compilation Flags](#gcc-compilation-flags)
-   - [Test Suites](#test-suites)
+10. [Windows Explorer Shell & Daemon Service (`service.c`)](#10-windows-explorer-shell--daemon-service-servicec)
+    - [IShellWindows COM Monitoring](#ishellwindows-com-monitoring)
+    - [Registry File Associations](#registry-file-associations)
+11. [Internationalization Subsystem (`i18n.c`, `i18n.h`)](#11-internationalization-subsystem-i18nc-i18nh)
+12. [Build System & Automated Testing](#12-build-system--automated-testing)
+    - [GCC Compilation Flags](#gcc-compilation-flags)
+    - [Test Suites](#test-suites)
 
 ---
 
@@ -72,6 +78,7 @@ win10-file-mod/
 ├── include/                        # Public C headers
 │   ├── common.h                    # Core constants, type definitions, and path limits
 │   ├── crypto.h                    # Windows CNG AES-256-GCM AEAD & PBKDF2 API
+│   ├── duplicate.h                 # SHA-256 duplicate finder engine & Recycle Bin API
 │   ├── i18n.h                      # StringId enumeration & language control API
 │   ├── renamer.h                   # Renamer structures, methods, collision & undo API
 │   ├── scanner.h                   # Unicode directory traversal & FileList container
@@ -82,6 +89,7 @@ win10-file-mod/
 │
 ├── src/                            # Implementation files
 │   ├── crypto.c                    # CNG BCrypt encrypt/decrypt, PBKDF2, CSPRNG
+│   ├── duplicate.c                 # 2-tier duplicate finder engine (size + SHA-256)
 │   ├── i18n.c                      # Localized string lookup tables (EN / ID)
 │   ├── main.c                      # WinMain entry point, CLI dispatch & single instance
 │   ├── renamer.c                   # Advanced Renamer style methods, tag parsing, undo
@@ -94,6 +102,7 @@ win10-file-mod/
 │
 ├── tests/                          # Automated unit and integration test suites
 │   ├── test_crypto.c               # 9-suite verification of CNG AES-GCM, salt, shred
+│   ├── test_duplicate.c            # Duplicate group clustering, SHA-256, and auto-select
 │   ├── test_i18n.c                 # 100% translation coverage across all String IDs
 │   ├── test_renamer.c              # Rename methods, tag formatting, collision detection
 │   └── test_service.c              # Auto-decrypt, inactivity tracker, startup recovery
@@ -230,32 +239,106 @@ Renaming operations are recorded in an `UndoHistory` linked list. Each batch com
 
 ---
 
-## 8. Win32 UI Architecture (`ui.c`, `ui.h`)
+## 8. Duplicate File Finder Subsystem (`duplicate.c`, `duplicate.h`)
+
+The `duplicate.c` module scans files in a target directory tree, identifies files with 100% bitwise identical contents, and provides secure deletion integration with the Windows Recycle Bin.
+
+### 2-Tier Detection Architecture (Size & SHA-256 Hash)
+To scan tens of thousands of files swiftly without incurring heavy disk I/O bottlenecks, the engine executes a 2-tier pipeline:
+1. **Tier 1 (Rapid Size Grouping)**:
+   - Uses `scanner_scan()` to enumerate the directory tree (with recursive subfolder support via the `recursive` parameter).
+   - Collected files are sorted by `file_size` ($O(N \log N)$).
+   - Files with unique sizes across the set are skipped immediately without reading a single byte from disk.
+2. **Tier 2 (Cryptographic SHA-256 Content Verification)**:
+   - For files sharing identical byte sizes, the application opens handles and streams file contents through Windows CNG (`BCryptCreateHash`, `BCryptHashData`, `BCryptFinishHash` with `BCRYPT_SHA256_ALGORITHM`).
+   - Content is hashed in 64 KB buffers, ensuring constant, low RAM usage even for multi-gigabyte files.
+   - Only files that match both in exact size AND 256-bit binary SHA-256 hash are clustered into a `DuplicateGroup`.
+
+### Data Structures & Cluster Grouping
+```c
+typedef struct {
+    wchar_t path[MAX_PATH_LEN];
+    wchar_t filename[256];
+    uint64_t file_size;
+    FILETIME modified_time;
+    uint8_t hash[32];          /* SHA-256 binary hash */
+    bool is_duplicate;         /* false = Original (primary), true = Copy */
+    bool is_selected;          /* Checked for recycling/deletion */
+} DuplicateItem;
+
+typedef struct {
+    uint8_t hash[32];
+    uint64_t file_size;
+    DuplicateItem *items;
+    size_t count;
+    size_t capacity;
+} DuplicateGroup;
+
+typedef struct {
+    DuplicateGroup *groups;
+    size_t group_count;
+    size_t total_duplicates;
+    uint64_t reclaimable_bytes;
+} DuplicateResults;
+```
+
+### Auto-Select Duplicate Copies Logic
+`duplicate_auto_select_copies(DuplicateResults *results)` automatically marks `item->is_selected = true` for all duplicate copies (`is_duplicate == true`), while guaranteeing that the first file in each cluster (`is_duplicate == false`) remains unchecked (`is_selected = false`). This safeguards users from accidentally deleting every copy of a file.
+
+### Safe Recycling via Windows Recycle Bin
+`duplicate_delete_item(const wchar_t *path, bool to_recycle_bin)` invokes the Windows Shell file operation:
+```c
+SHFILEOPSTRUCTW sf = {0};
+sf.wFunc = FO_DELETE;
+sf.pFrom = double_null_path;
+sf.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT;
+SHFileOperationW(&sf);
+```
+Specifying `FOF_ALLOWUNDO` safely moves the file to the Windows Recycle Bin, allowing instant restoration if ever needed.
+
+---
+
+## 9. Win32 UI Architecture (`ui.c`, `ui.h`)
 
 ### Window Message Loop & Subclassing
 - **Main Window Class**: `L"Win10FileModMainClass"`.
 - **Keyboard Handling**:
   - `login_pass_edit_proc`: Subclasses the password edit control to process `VK_RETURN` (Enter key) as a direct login submission.
   - `explorer_list_proc`: Subclasses the ListView to handle `Ctrl+A` for instant select-all.
-- **Single Instance Detection**: `wWinMain` checks `FindWindowW(L"Win10FileModMainClass", NULL)`. If found, it un-hides and focuses the existing instance (`SW_RESTORE`) and exits early.
+
+### Strict Single Instance Named Mutex
+To prevent multiple application instances and concurrent database collisions on `win10_file_enc_tracker.dat`, `wWinMain` uses a named Windows Mutex:
+```c
+HANDLE hMutex = CreateMutexW(NULL, FALSE, L"Win10FileMod_App_SingleInstance_Mutex");
+if (GetLastError() == ERROR_ALREADY_EXISTS) {
+    /* Restore and focus the existing instance */
+    HWND hExisting = FindWindowW(L"Win10FileModMainClass", NULL);
+    if (hExisting) {
+        ShowWindow(hExisting, SW_RESTORE);
+        SetForegroundWindow(hExisting);
+    }
+    CloseHandle(hMutex);
+    return 0;
+}
+```
+
+### Clean Window Close Lifecycle (`WM_CLOSE`)
+When the user closes the main window ([X] / Close) or presses `Alt+F4`:
+- The window procedure directly calls `app_exit_completely(hWnd)`:
+  - Persists application settings (last directory, language preference).
+  - Invokes `tracker_encrypt_all_decrypted_files()` to re-encrypt any active decrypted files to `.enc` and shreds their plaintext versions.
+  - Removes the main tray notification icon via `show_main_tray_icon(hWnd, false)`.
+  - Calls `DestroyWindow(hWnd)` and `PostQuitMessage(0)`.
+- This ensures **no duplicate tray icons** linger in the Windows notification area, cleanly terminating the GUI while allowing the background daemon service (`--service`) to run independently.
 
 ### ListView Custom Sorting & Visual Headers
 - **Column Header Notification**: Handled via `LVN_COLUMNCLICK` in `WM_NOTIFY`.
 - **Sorting Comparator**: `ListView_SortItems(hList, explorer_list_compare_func, lParamSort)`.
 - **Header Sort Arrows**: Dynamically queries `ListView_GetHeader` and applies `HDF_SORTUP` / `HDF_SORTDOWN` to `HDITEMW.fmt`.
 
-### Close-to-Tray (`WM_CLOSE` to `SW_HIDE`)
-- Intercepts `WM_CLOSE`:
-  - Saves persistent configurations.
-  - Calls `ShowWindow(hWnd, SW_HIDE)` and `show_main_tray_icon(hWnd, true)`.
-  - Suppresses `DestroyWindow`.
-- Intercepts `WM_APP_MAINTRAY`:
-  - `WM_LBUTTONUP` / `WM_LBUTTONDBLCLK`: Restores the window via `ShowWindow(hWnd, SW_RESTORE)` and removes the tray icon.
-  - `WM_RBUTTONUP`: Displays a native context menu with **Open** and **Exit Completely**.
-
 ---
 
-## 9. Windows Explorer Shell & Daemon Service
+## 10. Windows Explorer Shell & Daemon Service (`service.c`)
 
 ### IShellWindows COM Monitoring
 `service.c` runs `explorer_monitor_thread` which enumerates active File Explorer windows:
@@ -271,16 +354,16 @@ Renaming operations are recorded in an `UndoHistory` linked list. Each batch com
 
 ---
 
-## 10. Internationalization Subsystem (`i18n.c`, `i18n.h`)
+## 11. Internationalization Subsystem (`i18n.c`, `i18n.h`)
 
-All UI strings, menu items, table headers, and notification messages are referenced via the `StringId` enum (132 total keys):
+All UI strings, menu items, table headers, dialog messages, and tabs are referenced via the `StringId` enum (total **160 String IDs**):
 - Default Language: `LANG_EN` (English).
 - Supported Languages: `LANG_EN`, `LANG_ID` (Bahasa Indonesia).
-- Runtime Switching: Calling `i18n_set_language` followed by `update_ui_texts(hWnd)` re-applies all titles, tabs, menus, and column headers dynamically.
+- Runtime Switching: Calling `i18n_set_language` followed by `update_ui_texts(hWnd)` re-applies all titles, tabs, menus, and column headers dynamically without requiring an application restart.
 
 ---
 
-## 11. Build System & Automated Testing
+## 12. Build System & Automated Testing
 
 ### GCC Compilation Flags
 Compile using MinGW-w64 GCC with Unicode and Windows subsystems enabled:
@@ -288,13 +371,13 @@ Compile using MinGW-w64 GCC with Unicode and Windows subsystems enabled:
 ```cmd
 windres src\resources.rc -O coff -o src\resources.o
 gcc -O2 -Wall -Wextra -municode -mwindows -Iinclude ^
-    src\main.c src\crypto.c src\vault.c src\scanner.c src\shredder.c src\renamer.c src\i18n.c src\service.c src\ui.c src\resources.o ^
+    src\main.c src\crypto.c src\vault.c src\scanner.c src\shredder.c src\renamer.c src\duplicate.c src\i18n.c src\service.c src\ui.c src\resources.o ^
     -lbcrypt -lcomctl32 -lshell32 -lole32 -loleaut32 -luuid -lshlwapi ^
     -o win10_file_enc.exe
 ```
 
 ### Test Suites
-Four standalone test suites validate functionality without launching the GUI:
+Five standalone test suites validate functionality without launching the GUI:
 
 1. **`tests/test_crypto.exe`**:
    - Tests `BCryptGenRandom`, PBKDF2 key derivation from email salt, AES-256-GCM encryption/decryption, physical shredding, and AEAD tag authentication failure upon incorrect email.
@@ -302,5 +385,7 @@ Four standalone test suites validate functionality without launching the GUI:
    - Tests Find & Replace, prefix/suffix insertion, tag patterns (`<name>`, `<inc:01>`), case transformations, collision detection, and undo history.
 3. **`tests/test_service.exe`**:
    - Tests single-file and folder auto-decryption, 30-minute inactivity tracking, persistent tracker serialization, full exit auto-encryption, and Explorer shell registry registration.
-4. **`tests/test_i18n.exe`**:
-   - Validates 100% translation key coverage across all 132 `StringId` keys for both English and Bahasa Indonesia.
+4. **`tests/test_duplicate.exe`**:
+   - Tests 2-tier duplicate file scanning, SHA-256 binary hash clustering, unique file discrimination, recursive directory traversal, and automated copy selection.
+5. **`tests/test_i18n.exe`**:
+   - Validates 100% translation key coverage across all 160 `StringId` keys for both English and Bahasa Indonesia.

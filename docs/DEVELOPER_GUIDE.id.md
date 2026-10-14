@@ -28,15 +28,21 @@ Selamat datang di Panduan Pengembang **Win10 File Encryptor & Bulk Renamer**. Do
    - [Pipeline Metode & Pengurai Tag](#pipeline-metode--pengurai-tag)
    - [Deteksi Tabrakan Nama Waktu-Nyata](#deteksi-tabrakan-nama-waktu-nyata)
    - [Tumpukan Undo Multi-Langkah](#tumpukan-undo-multi-langkah)
-8. [Arsitektur Win32 UI (`ui.c`, `ui.h`)](#8-arsitektur-win32-ui-uic-uih)
+8. [Subsistem Pencari Berkas Duplikat (`duplicate.c`, `duplicate.h`)](#8-subsistem-pencari-berkas-duplikat-duplicatec-duplicateh)
+   - [Arsitektur Deteksi 2-Tier (Ukuran & Hash SHA-256)](#arsitektur-deteksi-2-tier-ukuran--hash-sha-256)
+   - [Struktur Data Hasil & Pengelompokan Klaster](#struktur-data-hasil--pengelompokan-klaster)
+   - [Logika Auto-Select Salinan Duplikat](#logika-auto-select-salinan-duplikat)
+   - [Penghapusan Aman ke Windows Recycle Bin](#penghapusan-aman-ke-windows-recycle-bin)
+9. [Arsitektur Win32 UI (`ui.c`, `ui.h`)](#9-arsitektur-win32-ui-uic-uih)
    - [Loop Pesan Jendela & Subclassing](#loop-pesan-jendela--subclassing)
+   - [Proteksi Single Instance Mutex](#proteksi-single-instance-mutex)
+   - [Siklus Penutupan Bersih Jendela (`WM_CLOSE`)](#siklus-penutupan-bersih-jendela-wm_close)
    - [Pengurutan Kustom ListView & Panah Header](#pengurutan-kustom-listview--panah-header)
-   - [Minimize/Close ke Tray (`WM_CLOSE` ke `SW_HIDE`)](#minimizeclose-ke-tray-wm_close-ke-sw_hide)
-9. [Layanan Latar Belakang & Integrasi Shell Explorer](#9-layanan-latar-belakang--integrasi-shell-explorer)
-   - [Pemantauan COM IShellWindows](#pemantauan-com-ishellwindows)
-   - [Asosiasi Berkas Registry Windows](#asosiasi-berkas-registry-windows)
-10. [Subsistem Internasionalisasi (`i18n.c`, `i18n.h`)](#10-subsistem-internasionalisasi-i18nc-i18nh)
-11. [Sistem Kompilasi (Build) & Pengujian Otomatis](#11-sistem-kompilasi-build--pengujian-otomatis)
+10. [Layanan Latar Belakang & Integrasi Shell Explorer (`service.c`)](#10-layanan-latar-belakang--integrasi-shell-explorer-servicec)
+    - [Pemantauan COM IShellWindows](#pemantauan-com-ishellwindows)
+    - [Asosiasi Berkas Registry Windows](#asosiasi-berkas-registry-windows)
+11. [Subsistem Internasionalisasi (`i18n.c`, `i18n.h`)](#11-subsistem-internasionalisasi-i18nc-i18nh)
+12. [Sistem Kompilasi (Build) & Pengujian Otomatis](#12-sistem-kompilasi-build--pengujian-otomatis)
     - [Opsi Kompilasi GCC](#opsi-kompilasi-gcc)
     - [Rangkaian Pengujian (Test Suites)](#rangkaian-pengujian-test-suites)
 
@@ -72,6 +78,7 @@ win10-file-mod/
 ├── include/                        # Header C publik
 │   ├── common.h                    # Konstanta inti, definisi tipe, dan batas path
 │   ├── crypto.h                    # API Windows CNG AES-256-GCM AEAD & PBKDF2
+│   ├── duplicate.h                 # API pencari berkas duplikat SHA-256 & Recycle Bin
 │   ├── i18n.h                      # Enumerasi StringId & API kendali multi-bahasa
 │   ├── renamer.h                   # Struktur renamer, metode, deteksi tabrakan & undo
 │   ├── scanner.h                   # Penelusur direktori Unicode & kontainer FileList
@@ -82,6 +89,7 @@ win10-file-mod/
 │
 ├── src/                            # Berkas implementasi C
 │   ├── crypto.c                    # Enkripsi/dekripsi CNG BCrypt, PBKDF2, CSPRNG
+│   ├── duplicate.c                 # Mesin pencari duplikat 2-tier (ukuran + SHA-256)
 │   ├── i18n.c                      # Tabel lookup string multi-bahasa (EN / ID)
 │   ├── main.c                      # Titik masuk WinMain, parser CLI & single instance
 │   ├── renamer.c                   # Metode Advanced Renamer, pengurai tag, undo
@@ -94,6 +102,7 @@ win10-file-mod/
 │
 ├── tests/                          # Rangkaian pengujian unit dan integrasi otomatis
 │   ├── test_crypto.c               # 9 rangkaian verifikasi CNG AES-GCM, salt, shred
+│   ├── test_duplicate.c            # Pengujian pengelompokan duplikat SHA-256 & auto-select
 │   ├── test_i18n.c                 # Cakupan terjemahan 100% pada semua String ID
 │   ├── test_renamer.c              # Metode rename, format tag, deteksi tabrakan
 │   └── test_service.c              # Auto-dekripsi, tracker inaktivitas, startup recovery
@@ -230,32 +239,106 @@ Setiap operasi perubahan nama massal dicatat ke dalam linked list `UndoHistory`.
 
 ---
 
-## 8. Arsitektur Win32 UI (`ui.c`, `ui.h`)
+## 8. Subsistem Pencari Berkas Duplikat (`duplicate.c`, `duplicate.h`)
+
+Modul `duplicate.c` bertanggung jawab melakukan pemindaian berkas dalam suatu direktori, mengidentifikasi berkas yang memiliki konten identik 100%, dan menyediakan fungsionalitas pembersihan aman ke Windows Recycle Bin.
+
+### Arsitektur Deteksi 2-Tier (Ukuran & Hash SHA-256)
+Untuk memproses puluhan ribu berkas secara instan tanpa membebani disk I/O, mesin pencari menerapkan pipeline 2-tahap:
+1. **Tier 1 (Penyaringan Ukuran Cepat)**:
+   - Modul memanfaatkan `scanner_scan()` untuk menelusuri folder target (opsi rekursif melalui flag `recursive`).
+   - Berkas-berkas dikumpulkan dan diurutkan berdasarkan `file_size` ($O(N \log N)$).
+   - Berkas yang memiliki ukuran berkas unik (tidak ada berkas lain dengan ukuran persis sama) langsung dilewati tanpa dibaca sama sekali dari disk.
+2. **Tier 2 (Verifikasi Konten SHA-256 Kriptografis)**:
+   - Untuk berkas-berkas dengan ukuran sama, aplikasi membuka berkas dan menghitung ringkasan kriptografi SHA-256 menggunakan Windows CNG API (`BCryptCreateHash`, `BCryptHashData`, `BCryptFinishHash` dengan algoritma `BCRYPT_SHA256_ALGORITHM`).
+   - Berkas dibaca dalam potongan *chunk* 64 KB, sehingga berkas berukuran gigabyte sekalipun dapat di-hash dengan konsumsi RAM yang konstan dan minimal.
+   - Hanya berkas dengan ukuran identik DAN hash SHA-256 biner identik yang dikelompokkan ke dalam satu grup duplikat (`DuplicateGroup`).
+
+### Struktur Data Hasil & Pengelompokan Klaster
+```c
+typedef struct {
+    wchar_t path[MAX_PATH_LEN];
+    wchar_t filename[256];
+    uint64_t file_size;
+    FILETIME modified_time;
+    uint8_t hash[32];          /* SHA-256 binary hash */
+    bool is_duplicate;         /* false = Asli (pertama), true = Salinan */
+    bool is_selected;          /* Checked for recycling/deletion */
+} DuplicateItem;
+
+typedef struct {
+    uint8_t hash[32];
+    uint64_t file_size;
+    DuplicateItem *items;
+    size_t count;
+    size_t capacity;
+} DuplicateGroup;
+
+typedef struct {
+    DuplicateGroup *groups;
+    size_t group_count;
+    size_t total_duplicates;
+    uint64_t reclaimable_bytes;
+} DuplicateResults;
+```
+
+### Logika Auto-Select Salinan Duplikat
+Fungsi `duplicate_auto_select_copies(DuplicateResults *results)` secara otomatis menandai `item->is_selected = true` untuk semua item yang memiliki `is_duplicate == true` (salinan redundan), sementara elemen pertama dalam kelompok (`is_duplicate == false`) selalu dipertahankan tidak dicentang (`is_selected = false`). Ini menjamin pengguna tidak akan secara tidak sengaja menghapus semua salinan dari sebuah berkas.
+
+### Penghapusan Aman ke Windows Recycle Bin
+Fungsi `duplicate_delete_item(const wchar_t *path, bool to_recycle_bin)` menggunakan Windows Shell File Operation:
+```c
+SHFILEOPSTRUCTW sf = {0};
+sf.wFunc = FO_DELETE;
+sf.pFrom = double_null_path;
+sf.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT;
+SHFileOperationW(&sf);
+```
+Dengan flag `FOF_ALLOWUNDO`, berkas dipindahkan ke Windows Recycle Bin secara native, memungkinkan pemulihan berkas sewaktu-waktu oleh pengguna.
+
+---
+
+## 9. Arsitektur Win32 UI (`ui.c`, `ui.h`)
 
 ### Loop Pesan Jendela & Subclassing
 - **Kelas Jendela Utama**: `L"Win10FileModMainClass"`.
 - **Penanganan Keyboard**:
   - `login_pass_edit_proc`: Melakukan subclassing pada kontrol kotak input kata sandi agar tombol `VK_RETURN` (Enter) memicu login secara langsung.
   - `explorer_list_proc`: Melakukan subclassing pada ListView untuk menangkap pintasan `Ctrl+A` guna memilih seluruh baris secara instan.
-- **Deteksi Single Instance**: `wWinMain` memeriksa keberadaan `FindWindowW(L"Win10FileModMainClass", NULL)`. Jika jendela sudah aktif, jendela tersebut ditampilkan kembali (`SW_RESTORE`), difokuskan ke layar depan, dan proses baru langsung dihentikan.
+
+### Proteksi Single Instance Mutex
+Untuk mencegah terjadinya multiple instances atau konflik konkurensi pada basis data pelacak enkripsi (`win10_file_enc_tracker.dat`), `wWinMain` memanfaatkan Windows Named Mutex:
+```c
+HANDLE hMutex = CreateMutexW(NULL, FALSE, L"Win10FileMod_App_SingleInstance_Mutex");
+if (GetLastError() == ERROR_ALREADY_EXISTS) {
+    /* Cari jendela yang sudah berjalan, pulihkan dan fokuskan ke depan */
+    HWND hExisting = FindWindowW(L"Win10FileModMainClass", NULL);
+    if (hExisting) {
+        ShowWindow(hExisting, SW_RESTORE);
+        SetForegroundWindow(hExisting);
+    }
+    CloseHandle(hMutex);
+    return 0;
+}
+```
+
+### Siklus Penutupan Bersih Jendela (`WM_CLOSE`)
+Ketika pengguna menekan tombol tutup window ([X] / Close) atau shortcut `Alt+F4`:
+- Jendela memanggil `app_exit_completely(hWnd)` secara langsung:
+  - Menyimpan status konfigurasi aplikasi (folder terakhir, preferensi bahasa).
+  - Memanggil `tracker_encrypt_all_decrypted_files()` untuk mengenkripsi kembali seluruh berkas terbuka menjadi `.enc` dan menghancurkan berkas plaintext (*secure shredding*).
+  - Menghapus ikon notification area tray utama melalui `show_main_tray_icon(hWnd, false)`.
+  - Memanggil `DestroyWindow(hWnd)` dan `PostQuitMessage(0)`.
+- Arsitektur ini memastikan **tidak ada ikon tray duplikat** di taskbar notification area, serta menjaga proses GUI tertutup bersih sementara daemon `--service` tetap dapat berjalan mandiri.
 
 ### Pengurutan Kustom ListView & Panah Header
 - **Notifikasi Klik Kolom**: Ditangkap melalui kode notifikasi `LVN_COLUMNCLICK` dalam `WM_NOTIFY`.
 - **Komparator Pengurutan**: `ListView_SortItems(hList, explorer_list_compare_func, lParamSort)`.
 - **Panah Pengurutan Visual**: Mengambil header melalui `ListView_GetHeader` dan menerapkan flag native `HDF_SORTUP` / `HDF_SORTDOWN` pada `HDITEMW.fmt`.
 
-### Minimize/Close ke Tray (`WM_CLOSE` ke `SW_HIDE`)
-- Menangkap pesan `WM_CLOSE`:
-  - Menyimpan pengaturan konfigurasi aplikasi.
-  - Memanggil `ShowWindow(hWnd, SW_HIDE)` dan `show_main_tray_icon(hWnd, true)`.
-  - Mengabaikan (suppress) eksekusi `DestroyWindow`.
-- Menangkap pesan tray kustom `WM_APP_MAINTRAY`:
-  - `WM_LBUTTONUP` / `WM_LBUTTONDBLCLK`: Mengembalikan tampilan jendela melalui `ShowWindow(hWnd, SW_RESTORE)` dan menyembunyikan ikon tray.
-  - `WM_RBUTTONUP`: Menampilkan menu konteks klik kanan native dengan pilihan **Open** dan **Exit Completely**.
-
 ---
 
-## 9. Layanan Latar Belakang & Integrasi Shell Explorer
+## 10. Layanan Latar Belakang & Integrasi Shell Explorer (`service.c`)
 
 ### Pemantauan COM IShellWindows
 Modul `service.c` menjalankan `explorer_monitor_thread` yang secara berkala memeriksa jendela File Explorer yang sedang aktif di Windows:
@@ -271,16 +354,16 @@ Fungsi `service_install()` mendaftarkan verb shell ke Registry Windows pengguna:
 
 ---
 
-## 10. Subsistem Internasionalisasi (`i18n.c`, `i18n.h`)
+## 11. Subsistem Internasionalisasi (`i18n.c`, `i18n.h`)
 
-Seluruh teks antarmuka, item menu, judul kolom tabel, dan pesan notifikasi dikelola melalui enumerasi `StringId` (total 132 ID string):
+Seluruh teks antarmuka, item menu, judul kolom tabel, pesan dialog, dan tab dikelola melalui enumerasi `StringId` (total **160 ID string**):
 - Bahasa Bawaan (Default): `LANG_EN` (Bahasa Inggris).
 - Bahasa yang Didukung: `LANG_EN`, `LANG_ID` (Bahasa Indonesia).
 - Penggantian Dinamis: Memanggil fungsi `i18n_set_language` yang dilanjutkan dengan `update_ui_texts(hWnd)` akan memperbarui seluruh teks label, tab, menu, dan kolom secara langsung tanpa perlu me-restart aplikasi.
 
 ---
 
-## 11. Sistem Kompilasi (Build) & Pengujian Otomatis
+## 12. Sistem Kompilasi (Build) & Pengujian Otomatis
 
 ### Opsi Kompilasi GCC
 Kompilasi menggunakan MinGW-w64 GCC dengan dukungan Unicode dan subsistem Windows aktif:
@@ -288,13 +371,13 @@ Kompilasi menggunakan MinGW-w64 GCC dengan dukungan Unicode dan subsistem Window
 ```cmd
 windres src\resources.rc -O coff -o src\resources.o
 gcc -O2 -Wall -Wextra -municode -mwindows -Iinclude ^
-    src\main.c src\crypto.c src\vault.c src\scanner.c src\shredder.c src\renamer.c src\i18n.c src\service.c src\ui.c src\resources.o ^
+    src\main.c src\crypto.c src\vault.c src\scanner.c src\shredder.c src\renamer.c src\duplicate.c src\i18n.c src\service.c src\ui.c src\resources.o ^
     -lbcrypt -lcomctl32 -lshell32 -lole32 -loleaut32 -luuid -lshlwapi ^
     -o win10_file_enc.exe
 ```
 
 ### Rangkaian Pengujian (Test Suites)
-Tersedia empat file biner pengujian mandiri tanpa harus memuat antarmuka grafis pengguna:
+Tersedia lima file biner pengujian mandiri tanpa harus memuat antarmuka grafis pengguna:
 
 1. **`tests/test_crypto.exe`**:
    - Menguji keacakan `BCryptGenRandom`, penurunan kunci PBKDF2 dari salt email, enkripsi/dekripsi AES-256-GCM, penghancuran berkas (shredding), serta kegagalan autentikasi tag AEAD jika email pemulihan tidak cocok.
@@ -302,5 +385,7 @@ Tersedia empat file biner pengujian mandiri tanpa harus memuat antarmuka grafis 
    - Menguji fitur Cari & Ganti, penambahan awalan/akhiran, pola tag (`<name>`, `<inc:01>`), transformasi kapitalisasi teks, deteksi tabrakan nama, dan riwayat undo.
 3. **`tests/test_service.exe`**:
    - Menguji dekripsi otomatis berkas tunggal dan folder, pelacak inaktivitas 30 menit, serialisasi berkas tracker persisten, enkripsi otomatis saat penutupan penuh, serta pendaftaran registry shell Explorer.
-4. **`tests/test_i18n.exe`**:
-   - Memvalidasi 100% kelengkapan kunci terjemahan pada seluruh 132 `StringId` untuk Bahasa Inggris dan Bahasa Indonesia.
+4. **`tests/test_duplicate.exe`**:
+   - Menguji pemindaian berkas duplikat 2-tier, pengelompokan hash SHA-256 identik, diskriminasi berkas unik, recursive directory traversal, dan penandaan otomatis salinan (*auto-select copies*).
+5. **`tests/test_i18n.exe`**:
+   - Memvalidasi 100% kelengkapan kunci terjemahan pada seluruh 160 `StringId` untuk Bahasa Inggris dan Bahasa Indonesia.

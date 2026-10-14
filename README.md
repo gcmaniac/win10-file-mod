@@ -56,9 +56,10 @@ Everything compiles to a standalone, zero-dependency executable linking directly
 - **Crash & Reboot Reconciliation**: Upon launch or reboot, any leftover decrypted files from unexpected shutdowns are automatically identified and re-encrypted before user interaction.
 - **Full Exit Protection**: Closing the application completely immediately re-encrypts all open decrypted files.
 
-### 5. 🔕 Close-to-Tray (Taskbar Notification Area)
-- **Background Protection**: Clicking the **X** (close) button hides the window to the taskbar system tray (`SW_HIDE`), keeping background monitoring active.
-- **Tray Context Menu**: Right-click the tray icon to **Open** the window or **Exit Completely** with graceful cleanup.
+### 5. 🛡️ Strict Single Instance & Clean Window Exit
+- **Single Instance Enforcement**: Uses a named Windows Mutex (`Win10FileMod_App_SingleInstance_Mutex`) to ensure strictly one application instance runs at a time.
+- **Auto Window Restoration**: If a second instance is launched, the existing window is automatically restored and brought to the foreground.
+- **Clean Taskbar Exit (No Duplicate Icons)**: Closing the main window ([X] / Close) cleanly terminates the GUI and removes its tray icon, preventing duplicate tray icon clutter in the taskbar notification area while allowing the background daemon service to operate independently if registered.
 
 ### 6. ⚙️ Background Service & Shell Integration
 - **Explorer Folder Auto-Decryption**: Background monitor (`IShellWindows` COM) detects navigation to protected folders in Windows Explorer and auto-decrypts them seamlessly.
@@ -78,6 +79,15 @@ Everything compiles to a standalone, zero-dependency executable linking directly
 - **Real-Time Live Preview**: The *"New File Name"* column updates synchronously as you type.
 - **Collision Detection**: Pre-execution collision scanning warns against duplicate or conflicting file names.
 - **Multi-Step Undo**: One-click rollback restores the previous file names using the undo stack.
+
+### 9. 🔍 Duplicate File Finder
+- **Fast & 100% Accurate 2-Tier Engine**:
+  - **Tier 1 (Rapid Size Grouping)**: Traverses directory (with recursive subfolder toggle) and groups files by file size. Files with unique sizes are skipped immediately without disk reads, drastically reducing I/O operations.
+  - **Tier 2 (SHA-256 Content Verification)**: Files sharing identical sizes are hashed and verified byte-for-byte using cryptographic **SHA-256** (via Windows CNG `bcrypt.dll`). Only files with 100% identical hashes are clustered into duplicate groups.
+- **Interactive Checkbox ListView**: Displays *File Name*, *Status (Original/Copy)*, *Size*, *Date Modified*, and *Full Path*.
+- **Auto-Select Copies**: One-click intelligence button that checks all duplicate copies while safely preserving one original file per group.
+- **Safe Recycling via Windows Recycle Bin**: Moves checked duplicate copies to the Recycle Bin using `SHFileOperationW` (`FOF_ALLOWUNDO`) so they can be restored if needed, accompanied by confirmation dialog showing exact disk space saved.
+- **Full Right-Click Context Menu**: Open file, show & highlight file in Windows Explorer, toggle checks, or delete individual files.
 
 ---
 
@@ -100,6 +110,7 @@ win10-file-mod/
 ├── include/                        # C header declarations
 │   ├── common.h                    # Core constants and shared structures
 │   ├── crypto.h                    # CNG AES-256-GCM and PBKDF2 API
+│   ├── duplicate.h                 # SHA-256 duplicate finder engine & Recycle Bin API
 │   ├── i18n.h                      # Multi-language string tables and API
 │   ├── renamer.h                   # Renamer structures, collision detection, and undo
 │   ├── scanner.h                   # Directory traversal walker
@@ -110,6 +121,7 @@ win10-file-mod/
 │
 ├── src/                            # C implementation files
 │   ├── crypto.c                    # CNG BCrypt encryption, decryption, and CSPRNG
+│   ├── duplicate.c                 # 2-tier duplicate finder engine (sizing + SHA-256)
 │   ├── i18n.c                      # Localized string lookup tables
 │   ├── main.c                      # WinMain entry point, CLI parser, and single instance
 │   ├── renamer.c                   # Advanced Renamer methods, tag parser, and undo
@@ -122,6 +134,7 @@ win10-file-mod/
 │
 ├── tests/                          # Automated test suites
 │   ├── test_crypto.c               # 9 suites verifying CNG AES-GCM, salt, and shredding
+│   ├── test_duplicate.c            # Duplicate group clustering, SHA-256, and auto-select
 │   ├── test_i18n.c                 # 100% key coverage verification across String IDs
 │   ├── test_renamer.c              # Renamer methods, tag patterns, and collision detection
 │   └── test_service.c              # Auto-decrypt, tracker persistence, and reconciliation
@@ -156,7 +169,7 @@ make
 ```cmd
 windres src\resources.rc -O coff -o src\resources.o
 gcc -O2 -Wall -Wextra -municode -mwindows -Iinclude ^
-    src\main.c src\crypto.c src\vault.c src\scanner.c src\shredder.c src\renamer.c src\i18n.c src\service.c src\ui.c src\resources.o ^
+    src\main.c src\crypto.c src\vault.c src\scanner.c src\shredder.c src\renamer.c src\duplicate.c src\i18n.c src\service.c src\ui.c src\resources.o ^
     -lbcrypt -lcomctl32 -lshell32 -lole32 -loleaut32 -luuid -lshlwapi ^
     -o win10_file_enc.exe
 ```
@@ -165,7 +178,7 @@ gcc -O2 -Wall -Wextra -municode -mwindows -Iinclude ^
 
 ## 🧪 Automated Testing
 
-Four automated test suites are included to verify functionality without launching the GUI:
+Five automated test suites are included to verify functionality without launching the GUI:
 
 ```cmd
 # 1. Cryptography & Shredder tests (9 suites)
@@ -183,6 +196,10 @@ tests\test_service.exe
 # 4. Multi-language (i18n) coverage tests
 gcc -O2 -Iinclude tests\test_i18n.c src\i18n.c -o tests\test_i18n.exe
 tests\test_i18n.exe
+
+# 5. Duplicate File Finder tests (SHA-256 & Auto-Select)
+gcc -O2 -Iinclude tests\test_duplicate.c src\duplicate.c -lbcrypt -lshell32 -o tests\test_duplicate.exe
+tests\test_duplicate.exe
 ```
 
 ---

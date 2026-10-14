@@ -17,10 +17,10 @@ Selamat datang di Panduan Pengguna **Win10 File Encryptor & Bulk Renamer**. Buku
    - [Sortir Kolom (Nama, Tipe, Ukuran, Tanggal, Status)](#sortir-kolom)
    - [Enkripsi Berkas & Folder Terpilih](#enkripsi-berkas--folder-terpilih)
    - [Dekripsi & Membuka Berkas Terproteksi](#dekripsi--membuka-berkas-terproteksi)
-5. [Auto-Lock 30 Menit & Auto-Enkripsi Mandiri](#5-auto-lock-30-menit--auto-enkripsi-mandiri)
+5. [Auto-Lock 30 Menit, Proteksi Instansi Tunggal & Penutupan](#5-auto-lock-30-menit-proteksi-instansi-tunggal--penutupan)
    - [Kunci Otomatis Inaktivitas 30 Menit](#kunci-otomatis-inaktivitas-30-menit)
-   - [Hide to Taskbar (Minimize ke System Tray)](#hide-to-taskbar-minimize-ke-system-tray)
-   - [Keamanan Penutupan (Enkripsi Total saat Keluar)](#keamanan-penutupan-enkripsi-total-saat-keluar)
+   - [Proteksi Instansi Tunggal (Strict Single Instance)](#proteksi-instansi-tunggal-strict-single-instance)
+   - [Penutupan Bersih Jendela (Bebas Ikon Ganda)](#penutupan-bersih-jendela-bebas-ikon-ganda)
    - [Pemulihan Otomatis Saat Restart atau Crash](#pemulihan-otomatis-saat-restart-atau-crash)
 6. [Integrasi Layanan Latar Belakang Windows Explorer](#6-integrasi-layanan-latar-belakang-windows-explorer)
    - [Mengaktifkan Layanan Auto-Decrypt](#mengaktifkan-layanan-auto-decrypt)
@@ -32,8 +32,15 @@ Selamat datang di Panduan Pengguna **Win10 File Encryptor & Bulk Renamer**. Buku
    - [Metode 4: Ubah Huruf Besar/Kecil](#metode-4-ubah-huruf-besarkecil)
    - [Metode 5: Pangkas Karakter (Trim)](#metode-5-pangkas-karakter-trim)
    - [Deteksi Tabrakan Nama & Fitur Batalkan (Undo)](#deteksi-tabrakan-nama--fitur-batalkan-undo)
-8. [Penggantian Bahasa Antarmuka (i18n)](#8-penggantian-bahasa-antarmuka-i18n)
-9. [Pertanyaan yang Sering Diajukan (FAQ)](#9-pertanyaan-yang-sering-diajukan-faq)
+8. [Pencari Berkas Duplikat (Duplicate File Finder)](#8-pencari-berkas-duplikat-duplicate-file-finder)
+   - [Memilih Folder & Opsi Rekursif Sub-folder](#memilih-folder--opsi-rekursif-sub-folder)
+   - [Algoritma 2-Fase Cepat (Ukuran & Hash SHA-256)](#algoritma-2-fase-cepat-ukuran--hash-sha-256)
+   - [Tampilan Hasil dengan Checkbox Interaktif](#tampilan-hasil-dengan-checkbox-interaktif)
+   - [Pilih Otomatis Salinan (Auto-Select Copies)](#pilih-otomatis-salinan-auto-select-copies)
+   - [Penghapusan Aman ke Windows Recycle Bin](#penghapusan-aman-ke-windows-recycle-bin)
+   - [Menu Konteks Klik Kanan](#menu-konteks-klik-kanan)
+9. [Penggantian Bahasa Antarmuka (i18n)](#9-penggantian-bahasa-antarmuka-i18n)
+10. [Pertanyaan yang Sering Diajukan (FAQ)](#10-pertanyaan-yang-sering-diajukan-faq)
 
 ---
 
@@ -116,32 +123,30 @@ Klik pada header kolom mana saja untuk mengurutkan daftar secara instan:
 
 ---
 
-## 5. Auto-Lock 30 Menit & Auto-Enkripsi Mandiri
+## 5. Auto-Lock 30 Menit, Proteksi Instansi Tunggal & Penutupan
 
 Untuk menjaga kerahasiaan data di memori dan disk, aplikasi menerapkan sistem pengamanan berlapis otomatis:
 
 ### Kunci Otomatis Inaktivitas 30 Menit
 - Setiap berkas yang didekripsi dicatat ke dalam **Decrypted File Tracker**.
-- Selama program berjalan (baik jendela utama aktif maupun disembunyikan di taskbar tray), timer background memeriksa status setiap 15 detik.
+- Selama program berjalan, timer background memeriksa status setiap 15 detik.
 - Jika berkas yang terbuka **tidak disentuh/dibuka lagi selama 30 menit berturut-turut**:
   - Program otomatis mengenkripsi kembali berkas tersebut menjadi `.enc` (AES-256-GCM).
-  - Berkas plaintext dihancurkan secara aman dari disk.
+  - Berkas plaintext dihancurkan secara aman dari disk (*secure shredding*).
   - Notifikasi balon system tray muncul mengabarkan bahwa berkas telah diamankan.
 - **Reset Otomatis saat Bekerja**: Jika Anda mengedit dan menyimpan file pada aplikasi luar (misal: Word, Notepad, IDE), perubahan waktu berkas otomatis terdeteksi dan timer 30 menit akan di-reset kembali dari awal.
 
-### Hide to Taskbar (Minimize ke System Tray)
-- Menekan tombol **Close (X)** pada judul jendela atau shortcut `Alt+F4` **tidak menutup aplikasi**, melainkan **menyembunyikannya ke System Tray / Taskbar Notification Area**.
-- Layanan pengawasan 30 menit dan auto-decrypt tetap berjalan penuh saat program berada di tray.
-- Untuk memunculkan kembali jendela utama:
-  - **Klik atau Klik Ganda** ikon perisai di tray.
-  - Atau klik kanan ikon tray pilih **🖥️ Buka Win10 File Encryptor**.
-  - Atau jalankan ulang `win10_file_enc.exe` dari shortcut desktop (aplikasi yang sedang berjalan di tray akan otomatis tampil ke depan).
+### Proteksi Instansi Tunggal (Strict Single Instance)
+- Aplikasi dilindungi secara ketat oleh **Windows Named Mutex** (`Win10FileMod_App_SingleInstance_Mutex`).
+- Sistem memastikan hanya ada **tepat 1 instansi jendela** dari program ini yang berjalan bersamaan.
+- Jika Anda meluncurkan kembali `win10_file_enc.exe` saat program sudah berjalan:
+  - Jendela yang sedang aktif otomatis dipulihkan (*restored*) dari kondisi terminimalkan/tersembunyi dan langsung dibawa ke baris terdepan layar pengguna.
+  - Proses kedua langsung berhenti tanpa menimbulkan duplikasi aplikasi di memori.
 
-### Keamanan Penutupan (Enkripsi Total saat Keluar)
-Ketika Anda keluar sepenuhnya lewat menu **Berkas ➔ Keluar** atau klik kanan tray ➔ **❌ Keluar Sepenuhnya**:
-- Seluruh berkas yang masih dalam status didekripsi akan **otomatis dienkripsi kembali ke format `.enc`**.
-- Seluruh plaintext dihancurkan secara aman.
-- Tidak ada data rahasia tanpa enkripsi yang tertinggal di hard drive setelah program tertutup.
+### Penutupan Bersih Jendela (Bebas Ikon Ganda)
+- Menekan tombol **Close (X)** pada judul jendela atau shortcut `Alt+F4` akan **menutup antarmuka grafis aplikasi secara tuntas** dan **membersihkan ikon tray utama**.
+- Desain ini secara tuntas menyelesaikan masalah penumpukan 2 ikon perisai di taskbar notification area, sehingga tray hanya menampilkan ikon daemon background jika service aktif.
+- **Keamanan Penutupan Penuh**: Saat antarmuka ditutup, seluruh berkas yang masih dalam status didekripsi akan **otomatis dienkripsi kembali ke format `.enc`** dan salinan plaintext-nya dihancurkan secara permanen.
 
 ### Pemulihan Otomatis Saat Restart atau Crash
 Jika komputer mengalami restart tiba-tiba, pemadaman listrik, atau crash:
@@ -204,18 +209,69 @@ Klik tab **🏷️ Bulk File Renamer** pada bilah navigasi atas untuk mengubah n
 
 ---
 
-## 8. Penggantian Bahasa Antarmuka (i18n)
+## 8. Pencari Berkas Duplikat (Duplicate File Finder)
+
+Klik tab **🔍 Pencari Berkas Duplikat** pada bilah navigasi atas untuk memindai, menemukan, dan membersihkan berkas-berkas duplikat di folder pilihan Anda guna menghemat ruang penyimpanan hard disk.
+
+### Memilih Folder & Opsi Rekursif Sub-folder
+1. Klik tombol **Pilih Folder...** (`Browse...`) untuk memilih direktori yang ingin Anda periksa.
+2. Centang **Pindai Sub-folder** (`Scan Subfolders`) jika Anda ingin memindai seluruh direktori anak secara rekursif, atau hilangkan centang jika hanya ingin memindai folder tingkat atas.
+3. Klik tombol **Mulai Pindai** (`Scan Duplicates`). Anda dapat membatalkan pemindaian sewaktu-waktu dengan menekan tombol **Hentikan** (`Stop`).
+
+### Algoritma 2-Fase Cepat (Ukuran & Hash SHA-256)
+Aplikasi menggunakan algoritma dua tahap berkinerja tinggi:
+- **Fase 1 (Penyaringan Ukuran Cepat)**: Membaca informasi ukuran berkas dari sistem berkas Windows. Berkas-berkas dengan ukuran yang unik langsung diabaikan tanpa membaca isi berkas dari disk.
+- **Fase 2 (Verifikasi Konten SHA-256)**: Hanya berkas-berkas yang memiliki ukuran sama persis yang dibaca dan dihitung hash kriptografi **SHA-256**-nya (menggunakan Windows CNG `bcrypt.dll`). Dua berkas hanya dinyatakan sebagai duplikat jika isi bit kontennya terbukti identik 100%.
+
+### Tampilan Hasil dengan Checkbox Interaktif
+Hasil pemindaian ditampilkan dalam tabel daftar berkas (*ListView*) dengan kolom:
+- **Kotak Centang (Checkbox)**: Menandai berkas yang akan dihapus ke Recycle Bin.
+- **Nama Berkas**: Nama berkas duplikat.
+- **Status**:
+  - `[Asli]` (`[Original]`): Berkas pertama yang ditemukan dalam grup duplikat.
+  - `[Salinan]` (`[Copy]`): Berkas duplikat tambahan yang identik.
+- **Ukuran**: Ukuran berkas dalam format ramah pengguna (`KB`, `MB`, `GB`).
+- **Tanggal Dimodifikasi**: Waktu modifikasi terakhir berkas.
+- **Path Lengkap**: Jalur lokasi absolut berkas pada media penyimpanan.
+
+### Pilih Otomatis Salinan (Auto-Select Copies)
+Untuk membersihkan duplikat dengan aman tanpa menghapus berkas yang asli:
+1. Klik tombol **Pilih Otomatis Salinan** (`Auto-Select Copies`).
+2. Program akan secara otomatis mencentang semua berkas berstatus `[Salinan]` dan **tetap mengosongkan centang pada 1 berkas `[Asli]`** di setiap kelompok duplikat.
+3. Tersedia juga tombol pintasan **Pilih Semua** (`Select All`) dan **Batal Pilih Semua** (`Deselect All`).
+
+### Penghapusan Aman ke Windows Recycle Bin
+1. Setelah memeriksa berkas-berkas yang dicentang, klik tombol **Hapus ke Recycle Bin** (`Delete to Recycle Bin`).
+2. Kotak dialog konfirmasi keamanan akan muncul menampilkan jumlah berkas terpilih dan **estimasi kapasitas disk yang akan dihemat** (misal: *Anda yakin ingin memindahkan 12 berkas duplikat (345.2 MB) ke Recycle Bin?*).
+3. Berkas dihapus menggunakan Windows Shell API (`SHFileOperationW` dengan flag `FOF_ALLOWUNDO`), sehingga berkas **tetap aman dan dapat dipulihkan kapan saja** dari Recycle Bin Windows jika dibutuhkan.
+
+### Menu Konteks Klik Kanan
+Klik kanan pada baris berkas di tabel duplikat untuk memanggil fungsi cepat:
+- **Buka Berkas** (`Open File`): Menjalankan berkas menggunakan aplikasi default Windows.
+- **Tampilkan di Explorer** (`Show in Explorer`): Membuka folder lokasi berkas dan langsung menyorot (*highlight*) berkas tersebut.
+- **Tandai / Batalkan Centang**: Mengubah status checkbox baris yang dipilih.
+- **Hapus Berkas Ini**: Menghapus hanya satu berkas yang diklik ke Recycle Bin.
+
+---
+
+## 9. Penggantian Bahasa Antarmuka (i18n)
 
 Aplikasi mendukung lokalisasi dinamis secara langsung:
 - Buka menu **🌐 Bahasa** (`🌐 Language`) di menu bar.
 - Pilih bahasa:
   - **English (Default)**
   - **Bahasa Indonesia**
-- Seluruh teks label tombol, judul dialog, kolom penjelajah, dan notifikasi tray berganti seketika tanpa perlu me-restart aplikasi.
+- Seluruh teks label tombol, judul dialog, kolom penjelajah, tab halaman, dan notifikasi tray berganti seketika tanpa perlu me-restart aplikasi.
 
 ---
 
-## 9. Pertanyaan yang Sering Diajukan (FAQ)
+## 10. Pertanyaan yang Sering Diajukan (FAQ)
+
+#### T: Mengapa aplikasi tidak mengizinkan membuka jendela baru jika aplikasi sudah berjalan?
+**J**: Sesuai arsitektur proteksi instansi tunggal (*Strict Single Instance*), aplikasi memanfaatkan Windows Mutex untuk mencegah duplikasi proses di memori dan menghindari tabrakan berkas pelacak enkripsi (`win10_file_enc_tracker.dat`). Jika Anda membuka kembali program, jendela yang sudah ada akan otomatis dipulihkan ke baris terdepan layar Anda.
+
+#### T: Mengapa ikon di taskbar notification area tidak bertumpuk menjadi 2 saat aplikasi ditutup?
+**J**: Versi terbaru telah mengoptimalkan siklus penutupan jendela. Saat tombol Tutup ([X] / Close) diklik, antarmuka jendela utama keluar secara bersih dan menghapus ikon tray-nya sendiri, sementara layanan latar belakang (jika diaktifkan via `--service`) tetap beroperasi mandiri tanpa menimbulkan ikon ganda.
 
 #### T: Di mana berkas hasil enkripsi disimpan?
 **J**: Berkas hasil enkripsi disimpan di folder yang sama dengan berkas asli dengan ekstensi tambahan `.enc` (misal: `catatan.txt` menjadi `catatan.txt.enc`).
@@ -226,5 +282,5 @@ Aplikasi mendukung lokalisasi dinamis secara langsung:
 #### T: Bisakah berkas asli dipulihkan setelah dilakukan pemusnahan (secure shredding)?
 **J**: **Tidak bisa.** Berkas asli ditimpa secara fisik dengan pola nol dan acak, serta di-flush ke controller perangkat keras sebelum dihapus. Software recovery data (seperti Recuva) hanya akan menemukan byte kosong.
 
-#### T: Bagaimana cara menutup aplikasi jika tombol 'X' hanya menyembunyikannya ke tray?
-**J**: Gunakan menu **Berkas ➔ Keluar** pada bilah menu atas, atau klik kanan ikon perisai di tray lalu pilih **Keluar Sepenuhnya**.
+#### T: Apakah berkas duplikat yang dihapus benar-benar hilang permanen?
+**J**: **Tidak.** Penghapusan pada modul Pencari Duplikat memindahkan berkas ke Windows Recycle Bin (`FOF_ALLOWUNDO`). Anda dapat membuka Recycle Bin di desktop Windows dan melakukan *Restore* jika ingin mengembalikan berkas tersebut.

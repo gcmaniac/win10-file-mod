@@ -6,6 +6,7 @@
 #include "renamer.h"
 #include "i18n.h"
 #include "service.h"
+#include "duplicate.h"
 #include <shlobj.h>
 #include <shellapi.h>
 
@@ -14,6 +15,7 @@
 #define IDM_FILE_EXIT           2002
 #define IDM_VIEW_ENCRYPT        2003
 #define IDM_VIEW_RENAME         2004
+#define IDM_VIEW_DUPLICATES     2007
 #define IDM_HELP_GUIDE          2005
 #define IDM_HELP_ABOUT          2006
 #define IDM_LANG_EN             2010
@@ -27,6 +29,12 @@
 #define IDC_MENU_EXPLORER_DECRYPT_SEL   5002
 #define IDC_MENU_EXPLORER_SELECT_ALL    5003
 #define IDC_MENU_EXPLORER_ENCRYPT_ALL   5004
+
+/* Duplicate Context Menu IDs */
+#define IDC_MENU_DUP_OPEN               5101
+#define IDC_MENU_DUP_EXPLORER           5102
+#define IDC_MENU_DUP_TOGGLE             5103
+#define IDC_MENU_DUP_DELETE             5104
 
 /* Main Window System Tray IDs */
 #define WM_APP_MAINTRAY                 (WM_APP + 30)
@@ -101,11 +109,28 @@
 #define IDC_REN_BTN_PREVIEW     3125
 #define IDC_REN_STATIC_STATUS   3126
 
+/* Page 3 (Duplicate File Finder) IDs */
+#define IDC_DUP_GRP_FOLDER      3201
+#define IDC_DUP_EDIT_FOLDER     3202
+#define IDC_DUP_BTN_BROWSE      3203
+#define IDC_DUP_CHK_RECURSIVE   3204
+#define IDC_DUP_BTN_SCAN        3205
+#define IDC_DUP_BTN_STOP        3206
+#define IDC_DUP_BTN_AUTOSEL     3207
+#define IDC_DUP_BTN_DELETE      3208
+#define IDC_DUP_BTN_SEL_ALL     3209
+#define IDC_DUP_BTN_DESEL_ALL   3210
+#define IDC_DUP_LISTVIEW        3211
+#define IDC_DUP_PROGRESS        3212
+#define IDC_DUP_STATIC_STATUS   3213
+
 /* Custom Thread Messages */
 #define WM_APP_LOG_MSG          (WM_APP + 1)
 #define WM_APP_PROGRESS         (WM_APP + 2)
 #define WM_APP_FINISHED         (WM_APP + 3)
 #define WM_APP_REN_FINISHED     (WM_APP + 5)
+#define WM_APP_DUP_PROGRESS     (WM_APP + 10)
+#define WM_APP_DUP_FINISHED     (WM_APP + 11)
 
 /* Global Window Handles */
 static HWND g_hWndMain = NULL;
@@ -218,6 +243,40 @@ static wchar_t g_szCurrentExplorerFolder[MAX_PATH * 2] = {0};
 /* Renamer State */
 static RenameItemList *g_pRenameList = NULL;
 static UndoHistory    *g_pUndoHistory = NULL;
+
+/* Page 3 (Duplicate Finder) Handles */
+static HWND g_hDupCtrls[32] = {0};
+static int  g_nDupCtrls = 0;
+static HWND g_hDupGrpFolder = NULL;
+static HWND g_hDupEditFolder = NULL;
+static HWND g_hDupBtnBrowse = NULL;
+static HWND g_hDupChkRecursive = NULL;
+static HWND g_hDupBtnScan = NULL;
+static HWND g_hDupList = NULL;
+static HWND g_hDupProgress = NULL;
+static HWND g_hDupStaticStatus = NULL;
+static HWND g_hDupBtnAutoSel = NULL;
+static HWND g_hDupBtnSelAll = NULL;
+static HWND g_hDupBtnDeselAll = NULL;
+static HWND g_hDupBtnDelete = NULL;
+static HWND g_hDupBtnStop = NULL;
+
+static DuplicateResults *g_pDupResults = NULL;
+static volatile bool g_bDupCancel = false;
+static HANDLE g_hDupWorkerThread = NULL;
+
+typedef struct {
+    int phase;
+    size_t current;
+    size_t total;
+    wchar_t current_file[MAX_PATH * 2];
+} DupProgressPayload;
+
+typedef struct {
+    HWND hWnd;
+    wchar_t folder[MAX_PATH * 2];
+    bool recursive;
+} DupWorkerParams;
 
 typedef struct {
     JobConfig config;
@@ -365,6 +424,7 @@ static void update_login_attempt_ui(void) {
 static void show_page(int page_idx) {
     bool on_enc = (page_idx == 0);
     bool on_ren = (page_idx == 1);
+    bool on_dup = (page_idx == 2);
 
     bool is_cfg = vault_is_configured();
 
@@ -386,6 +446,11 @@ static void show_page(int page_idx) {
     /* Page 2 Renamer Controls */
     for (int i = 0; i < g_nRenCtrls; i++) {
         if (g_hRenCtrls[i]) ShowWindow(g_hRenCtrls[i], on_ren ? SW_SHOW : SW_HIDE);
+    }
+
+    /* Page 3 Duplicate Controls */
+    for (int i = 0; i < g_nDupCtrls; i++) {
+        if (g_hDupCtrls[i]) ShowWindow(g_hDupCtrls[i], on_dup ? SW_SHOW : SW_HIDE);
     }
 
     if (on_enc) {
@@ -414,6 +479,18 @@ static void show_page(int page_idx) {
         }
         update_method_ui_labels((int)SendMessage(g_hRenComboMethod, CB_GETCURSEL, 0, 0));
         trigger_live_preview();
+    } else if (on_dup) {
+        wchar_t f1[MAX_PATH * 2] = {0};
+        wchar_t f3[MAX_PATH * 2] = {0};
+        GetWindowTextW(g_hEditFolder, f1, MAX_PATH * 2);
+        GetWindowTextW(g_hDupEditFolder, f3, MAX_PATH * 2);
+        if (wcslen(f3) == 0) {
+            if (wcslen(f1) > 0) {
+                SetWindowTextW(g_hDupEditFolder, f1);
+            } else if (g_szLastFolder[0] != L'\0') {
+                SetWindowTextW(g_hDupEditFolder, g_szLastFolder);
+            }
+        }
     }
 
     RECT rc;
@@ -1850,6 +1927,30 @@ static void layout_controls(HWND hWnd, int cx, int cy) {
         SetWindowPos(g_hRenBtnStart, NULL, 155, btnY, 190, 28, SWP_NOZORDER);
         SetWindowPos(g_hRenBtnUndo, NULL, 355, btnY, 150, 28, SWP_NOZORDER);
         SetWindowPos(g_hRenStaticStatus, NULL, 515, btnY + 4, cx - 530, 20, SWP_NOZORDER);
+    } else if (cur_tab == 2) {
+        /* Page 3 (Duplicate Finder) Layout */
+        SetWindowPos(g_hDupGrpFolder, NULL, 15, 35, cx - 30, 65, SWP_NOZORDER);
+        SetWindowPos(g_hDupEditFolder, NULL, 25, 60, cx - 395, 24, SWP_NOZORDER);
+        SetWindowPos(g_hDupBtnBrowse, NULL, cx - 360, 59, 80, 26, SWP_NOZORDER);
+        SetWindowPos(g_hDupChkRecursive, NULL, cx - 270, 61, 130, 22, SWP_NOZORDER);
+        SetWindowPos(g_hDupBtnScan, NULL, cx - 130, 59, 115, 26, SWP_NOZORDER);
+
+        int listY = 108;
+        int bottomAreaH = 80;
+        int listH = cy - listY - bottomAreaH;
+        if (listH < 120) listH = 120;
+        SetWindowPos(g_hDupList, NULL, 15, listY, cx - 30, listH, SWP_NOZORDER);
+
+        int bY = listY + listH + 8;
+        SetWindowPos(g_hDupProgress, NULL, 15, bY, cx - 30, 16, SWP_NOZORDER);
+        SetWindowPos(g_hDupStaticStatus, NULL, 15, bY + 20, cx - 30, 20, SWP_NOZORDER);
+
+        int btnY = bY + 44;
+        SetWindowPos(g_hDupBtnAutoSel, NULL, 15, btnY, 180, 28, SWP_NOZORDER);
+        SetWindowPos(g_hDupBtnSelAll, NULL, 205, btnY, 100, 28, SWP_NOZORDER);
+        SetWindowPos(g_hDupBtnDeselAll, NULL, 315, btnY, 100, 28, SWP_NOZORDER);
+        SetWindowPos(g_hDupBtnDelete, NULL, 425, btnY, 200, 28, SWP_NOZORDER);
+        SetWindowPos(g_hDupBtnStop, NULL, cx - 115, btnY, 100, 28, SWP_NOZORDER);
     }
 }
 
@@ -1869,6 +1970,7 @@ static HMENU create_app_menu(void) {
     HMENU hViewMenu = CreatePopupMenu();
     AppendMenuW(hViewMenu, MF_STRING, IDM_VIEW_ENCRYPT, i18n_get(STR_TAB_ENCRYPT));
     AppendMenuW(hViewMenu, MF_STRING, IDM_VIEW_RENAME, i18n_get(STR_TAB_RENAME));
+    AppendMenuW(hViewMenu, MF_STRING, IDM_VIEW_DUPLICATES, i18n_get(STR_TAB_DUPLICATES));
     AppendMenuW(hMenuBar, MF_POPUP, (UINT_PTR)hViewMenu, i18n_get(STR_MENU_MODES));
 
     HMENU hLangMenu = CreatePopupMenu();
@@ -1919,6 +2021,8 @@ static void update_ui_texts(HWND hWnd) {
         TabCtrl_SetItem(g_hTab, 0, &tie);
         tie.pszText = (LPWSTR)i18n_get(STR_TAB_RENAME);
         TabCtrl_SetItem(g_hTab, 1, &tie);
+        tie.pszText = (LPWSTR)i18n_get(STR_TAB_DUPLICATES);
+        TabCtrl_SetItem(g_hTab, 2, &tie);
     }
 
     /* Refresh Setup View */
@@ -2000,6 +2104,32 @@ static void update_ui_texts(HWND hWnd) {
     if (g_hRenBtnStart) SetWindowTextW(g_hRenBtnStart, i18n_get(STR_REN_BTN_APPLY));
     if (g_hRenBtnUndo) SetWindowTextW(g_hRenBtnUndo, i18n_get(STR_REN_BTN_UNDO));
 
+    /* Refresh Duplicate Finder View */
+    if (g_hDupGrpFolder) SetWindowTextW(g_hDupGrpFolder, i18n_get(STR_DUP_GRP_TARGET));
+    if (g_hDupBtnBrowse) SetWindowTextW(g_hDupBtnBrowse, i18n_get(STR_BTN_BROWSE));
+    if (g_hDupChkRecursive) SetWindowTextW(g_hDupChkRecursive, i18n_get(STR_CHK_RECURSIVE));
+    if (g_hDupBtnScan) SetWindowTextW(g_hDupBtnScan, i18n_get(STR_DUP_BTN_SCAN));
+    if (g_hDupBtnStop) SetWindowTextW(g_hDupBtnStop, i18n_get(STR_DUP_BTN_STOP));
+    if (g_hDupBtnAutoSel) SetWindowTextW(g_hDupBtnAutoSel, i18n_get(STR_DUP_BTN_AUTOSEL));
+    if (g_hDupBtnSelAll) SetWindowTextW(g_hDupBtnSelAll, i18n_get(STR_DUP_BTN_SEL_ALL));
+    if (g_hDupBtnDeselAll) SetWindowTextW(g_hDupBtnDeselAll, i18n_get(STR_DUP_BTN_DESEL_ALL));
+    if (g_hDupBtnDelete) SetWindowTextW(g_hDupBtnDelete, i18n_get(STR_DUP_BTN_DELETE));
+
+    if (g_hDupList) {
+        LVCOLUMNW c = {0};
+        c.mask = LVCF_TEXT;
+        c.pszText = (LPWSTR)i18n_get(STR_DUP_COL_FILENAME);
+        ListView_SetColumn(g_hDupList, 0, &c);
+        c.pszText = (LPWSTR)i18n_get(STR_DUP_COL_STATUS);
+        ListView_SetColumn(g_hDupList, 1, &c);
+        c.pszText = (LPWSTR)i18n_get(STR_DUP_COL_SIZE);
+        ListView_SetColumn(g_hDupList, 2, &c);
+        c.pszText = (LPWSTR)i18n_get(STR_DUP_COL_MODIFIED);
+        ListView_SetColumn(g_hDupList, 3, &c);
+        c.pszText = (LPWSTR)i18n_get(STR_DUP_COL_PATH);
+        ListView_SetColumn(g_hDupList, 4, &c);
+    }
+
     RECT rc;
     GetClientRect(hWnd, &rc);
     layout_controls(hWnd, rc.right - rc.left, rc.bottom - rc.top);
@@ -2067,13 +2197,17 @@ static void app_exit_completely(HWND hWnd) {
             is_id ? L"Konfirmasi Keluar" : L"Confirm Exit", MB_YESNO | MB_ICONQUESTION);
         if (res != IDYES) return;
         g_bCancelRequested = true;
+        g_bDupCancel = true;
     }
 
     if (g_bRememberFolder) {
         wchar_t current_folder[MAX_PATH * 2] = {0};
         GetWindowTextW(g_hEditFolder, current_folder, MAX_PATH * 2);
-        if (wcslen(current_folder) == 0) {
+        if (wcslen(current_folder) == 0 && g_hRenEditFolder) {
             GetWindowTextW(g_hRenEditFolder, current_folder, MAX_PATH * 2);
+        }
+        if (wcslen(current_folder) == 0 && g_hDupEditFolder) {
+            GetWindowTextW(g_hDupEditFolder, current_folder, MAX_PATH * 2);
         }
         wchar_t clean[MAX_PATH * 2] = {0};
         sanitize_path(current_folder, clean, MAX_PATH * 2);
@@ -2087,6 +2221,287 @@ static void app_exit_completely(HWND hWnd) {
     tracker_encrypt_all_decrypted_files();
     vault_logout();
     DestroyWindow(hWnd);
+}
+
+/* ========================================================================= */
+/* Duplicate File Finder Functions                                           */
+/* ========================================================================= */
+
+static void populate_duplicate_listview(void) {
+    if (!g_hDupList) return;
+    SendMessage(g_hDupList, WM_SETREDRAW, FALSE, 0);
+    ListView_DeleteAllItems(g_hDupList);
+
+    if (!g_pDupResults) {
+        SendMessage(g_hDupList, WM_SETREDRAW, TRUE, 0);
+        InvalidateRect(g_hDupList, NULL, TRUE);
+        return;
+    }
+
+    int item_idx = 0;
+    for (DuplicateGroup *g = g_pDupResults->groups; g; g = g->next) {
+        for (DuplicateItem *it = g->items; it; it = it->next) {
+            LVITEMW lvi = {0};
+            lvi.mask = LVIF_TEXT | LVIF_PARAM;
+            lvi.iItem = item_idx;
+            lvi.iSubItem = 0;
+            lvi.pszText = it->filename;
+            lvi.lParam = (LPARAM)it;
+            ListView_InsertItem(g_hDupList, &lvi);
+
+            /* SubItem 1: Status (Original vs Duplicate) */
+            wchar_t status_buf[64];
+            if (it->is_original) {
+                swprintf(status_buf, 64, L"⭐ %ls (Grup #%zu)", i18n_get(STR_DUP_ORIGINAL), it->group_id);
+            } else {
+                swprintf(status_buf, 64, L"📑 %ls (Grup #%zu)", i18n_get(STR_DUP_DUPLICATE), it->group_id);
+            }
+            ListView_SetItemText(g_hDupList, item_idx, 1, status_buf);
+
+            /* SubItem 2: Size */
+            wchar_t size_str[64];
+            format_file_size_w(it->size, size_str, 64);
+            ListView_SetItemText(g_hDupList, item_idx, 2, size_str);
+
+            /* SubItem 3: Modified Time */
+            SYSTEMTIME stUTC, stLocal;
+            FileTimeToSystemTime(&it->mod_time, &stUTC);
+            SystemTimeToTzSpecificLocalTime(NULL, &stUTC, &stLocal);
+            wchar_t date_str[64];
+            swprintf(date_str, 64, L"%04d-%02d-%02d %02d:%02d",
+                stLocal.wYear, stLocal.wMonth, stLocal.wDay,
+                stLocal.wHour, stLocal.wMinute);
+            ListView_SetItemText(g_hDupList, item_idx, 3, date_str);
+
+            /* SubItem 4: Full Path */
+            ListView_SetItemText(g_hDupList, item_idx, 4, it->path);
+
+            /* Set checkbox */
+            ListView_SetCheckState(g_hDupList, item_idx, it->checked);
+
+            item_idx++;
+        }
+    }
+
+    SendMessage(g_hDupList, WM_SETREDRAW, TRUE, 0);
+    InvalidateRect(g_hDupList, NULL, TRUE);
+}
+
+static void duplicate_progress_callback(
+    int phase,
+    size_t current,
+    size_t total,
+    const wchar_t *current_file,
+    void *user_data
+) {
+    HWND hWnd = (HWND)user_data;
+    if (!hWnd || !IsWindow(hWnd)) return;
+
+    DupProgressPayload *payload = (DupProgressPayload *)malloc(sizeof(DupProgressPayload));
+    if (payload) {
+        payload->phase = phase;
+        payload->current = current;
+        payload->total = total;
+        wcsncpy(payload->current_file, current_file ? current_file : L"", MAX_PATH * 2 - 1);
+        payload->current_file[MAX_PATH * 2 - 1] = L'\0';
+        PostMessageW(hWnd, WM_APP_DUP_PROGRESS, 0, (LPARAM)payload);
+    }
+}
+
+static DWORD WINAPI duplicate_worker_thread(LPVOID lpParam) {
+    DupWorkerParams *params = (DupWorkerParams *)lpParam;
+    if (!params) return 0;
+
+    DuplicateResults *results = duplicate_find(
+        params->folder,
+        params->recursive,
+        duplicate_progress_callback,
+        (void *)params->hWnd,
+        &g_bDupCancel
+    );
+
+    PostMessageW(params->hWnd, WM_APP_DUP_FINISHED, 0, (LPARAM)results);
+    free(params);
+    return 0;
+}
+
+static void start_duplicate_scan(HWND hWnd) {
+    if (g_bIsWorking) return;
+
+    wchar_t raw_folder[MAX_PATH * 2] = {0};
+    GetWindowTextW(g_hDupEditFolder, raw_folder, MAX_PATH * 2);
+    wchar_t folder[MAX_PATH * 2] = {0};
+    sanitize_path(raw_folder, folder, MAX_PATH * 2);
+
+    if (folder[0] == L'\0') {
+        MessageBoxW(hWnd, i18n_get(STR_WARN_SELECT_FOLDER),
+            (i18n_get_language() == LANG_ID) ? L"Peringatan" : L"Warning", MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    DWORD attr = GetFileAttributesW(folder);
+    if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY)) {
+        MessageBoxW(hWnd, i18n_get(STR_WARN_INVALID_FOLDER),
+            (i18n_get_language() == LANG_ID) ? L"Kesalahan" : L"Error", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    bool recursive = (SendMessage(g_hDupChkRecursive, BM_GETCHECK, 0, 0) == BST_CHECKED);
+
+    if (g_pDupResults) {
+        duplicate_free_results(g_pDupResults);
+        g_pDupResults = NULL;
+    }
+    ListView_DeleteAllItems(g_hDupList);
+
+    g_bIsWorking = true;
+    g_bDupCancel = false;
+
+    EnableWindow(g_hDupBtnScan, FALSE);
+    EnableWindow(g_hDupBtnAutoSel, FALSE);
+    EnableWindow(g_hDupBtnDelete, FALSE);
+    EnableWindow(g_hDupBtnStop, TRUE);
+
+    SendMessage(g_hDupProgress, PBM_SETRANGE32, 0, 100);
+    SendMessage(g_hDupProgress, PBM_SETPOS, 0, 0);
+
+    bool is_id = (i18n_get_language() == LANG_ID);
+    SetWindowTextW(g_hDupStaticStatus, is_id ? L"Memulai pemindaian direktori..." : L"Starting directory scan...");
+
+    DupWorkerParams *params = (DupWorkerParams *)malloc(sizeof(DupWorkerParams));
+    if (!params) {
+        g_bIsWorking = false;
+        EnableWindow(g_hDupBtnScan, TRUE);
+        EnableWindow(g_hDupBtnStop, FALSE);
+        return;
+    }
+    params->hWnd = hWnd;
+    wcsncpy(params->folder, folder, MAX_PATH * 2 - 1);
+    params->folder[MAX_PATH * 2 - 1] = L'\0';
+    params->recursive = recursive;
+
+    g_hDupWorkerThread = CreateThread(NULL, 0, duplicate_worker_thread, (LPVOID)params, 0, NULL);
+}
+
+static void delete_selected_duplicates(HWND hWnd) {
+    if (!g_pDupResults || g_bIsWorking) return;
+
+    int item_count = ListView_GetItemCount(g_hDupList);
+    size_t checked_count = 0;
+    uint64_t checked_bytes = 0;
+
+    for (int i = 0; i < item_count; i++) {
+        BOOL is_checked = ListView_GetCheckState(g_hDupList, i);
+        LVITEMW lvi = {0};
+        lvi.mask = LVIF_PARAM;
+        lvi.iItem = i;
+        if (ListView_GetItem(g_hDupList, &lvi)) {
+            DuplicateItem *pIt = (DuplicateItem *)lvi.lParam;
+            if (pIt) {
+                pIt->checked = (is_checked != FALSE);
+                if (pIt->checked) {
+                    checked_count++;
+                    checked_bytes += pIt->size;
+                }
+            }
+        }
+    }
+
+    if (checked_count == 0) {
+        MessageBoxW(hWnd, i18n_get(STR_DUP_WARN_NO_SELECTION),
+            (i18n_get_language() == LANG_ID) ? L"Informasi" : L"Information", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+
+    wchar_t size_str[64];
+    format_file_size_w(checked_bytes, size_str, 64);
+
+    wchar_t confirm_msg[512];
+    swprintf(confirm_msg, 512, i18n_get(STR_DUP_CONFIRM_DEL_MSG), checked_count, size_str);
+
+    int res = MessageBoxW(hWnd, confirm_msg, i18n_get(STR_DUP_CONFIRM_DEL_TITLE),
+        MB_YESNO | MB_ICONQUESTION);
+    if (res != IDYES) return;
+
+    uint64_t deleted_bytes = 0;
+    size_t deleted_count = duplicate_delete_checked(g_pDupResults, hWnd, &deleted_bytes);
+
+    populate_duplicate_listview();
+
+    wchar_t del_size_str[64];
+    format_file_size_w(deleted_bytes, del_size_str, 64);
+
+    wchar_t success_msg[512];
+    swprintf(success_msg, 512, i18n_get(STR_DUP_DEL_SUCCESS), deleted_count, del_size_str);
+    MessageBoxW(hWnd, success_msg,
+        (i18n_get_language() == LANG_ID) ? L"Sukses" : L"Success", MB_OK | MB_ICONINFORMATION);
+
+    wchar_t status_buf[256];
+    bool is_id = (i18n_get_language() == LANG_ID);
+    if (is_id) {
+        swprintf(status_buf, 256, L"Berhasil menghapus %zu salinan. Ruang dihemat: %ls.", deleted_count, del_size_str);
+    } else {
+        swprintf(status_buf, 256, L"Successfully removed %zu copy file(s). Reclaimed: %ls.", deleted_count, del_size_str);
+    }
+    SetWindowTextW(g_hDupStaticStatus, status_buf);
+}
+
+static void handle_duplicate_context_menu(HWND hWnd, int x, int y) {
+    if (!g_hDupList) return;
+
+    int sel_idx = ListView_GetNextItem(g_hDupList, -1, LVNI_SELECTED);
+    if (sel_idx < 0) return;
+
+    LVITEMW lvi = {0};
+    lvi.mask = LVIF_PARAM;
+    lvi.iItem = sel_idx;
+    if (!ListView_GetItem(g_hDupList, &lvi)) return;
+    DuplicateItem *pIt = (DuplicateItem *)lvi.lParam;
+    if (!pIt) return;
+
+    POINT pt;
+    if (x == -1 && y == -1) {
+        RECT rc;
+        ListView_GetItemRect(g_hDupList, sel_idx, &rc, LVIR_BOUNDS);
+        pt.x = rc.left + 50;
+        pt.y = rc.top + 10;
+        ClientToScreen(g_hDupList, &pt);
+    } else {
+        pt.x = x;
+        pt.y = y;
+    }
+
+    HMENU hMenu = CreatePopupMenu();
+    AppendMenuW(hMenu, MF_STRING, IDC_MENU_DUP_OPEN, i18n_get(STR_DUP_MENU_OPEN));
+    AppendMenuW(hMenu, MF_STRING, IDC_MENU_DUP_EXPLORER, i18n_get(STR_DUP_MENU_EXPLORER));
+    AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
+    BOOL is_checked = ListView_GetCheckState(g_hDupList, sel_idx);
+    AppendMenuW(hMenu, MF_STRING, IDC_MENU_DUP_TOGGLE, is_checked ? i18n_get(STR_DUP_MENU_UNCHECK) : i18n_get(STR_DUP_MENU_CHECK));
+    AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(hMenu, MF_STRING, IDC_MENU_DUP_DELETE, i18n_get(STR_DUP_BTN_DELETE));
+
+    SetForegroundWindow(hWnd);
+    int cmd = TrackPopupMenu(hMenu, TPM_RIGHTBUTTON | TPM_TOPALIGN | TPM_LEFTALIGN | TPM_RETURNCMD, pt.x, pt.y, 0, hWnd, NULL);
+    DestroyMenu(hMenu);
+
+    if (cmd == IDC_MENU_DUP_OPEN) {
+        if (pIt->path) {
+            ShellExecuteW(NULL, L"open", pIt->path, NULL, NULL, SW_SHOWNORMAL);
+        }
+    } else if (cmd == IDC_MENU_DUP_EXPLORER) {
+        if (pIt->path) {
+            wchar_t param[MAX_PATH * 2 + 32];
+            swprintf(param, MAX_PATH * 2 + 32, L"/select,\"%ls\"", pIt->path);
+            ShellExecuteW(NULL, L"open", L"explorer.exe", param, NULL, SW_SHOWNORMAL);
+        }
+    } else if (cmd == IDC_MENU_DUP_TOGGLE) {
+        pIt->checked = !is_checked;
+        ListView_SetCheckState(g_hDupList, sel_idx, pIt->checked);
+    } else if (cmd == IDC_MENU_DUP_DELETE) {
+        pIt->checked = true;
+        ListView_SetCheckState(g_hDupList, sel_idx, TRUE);
+        delete_selected_duplicates(hWnd);
+    }
 }
 
 bool ui_init(HINSTANCE hInstance) {
@@ -2206,11 +2621,14 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
             TCITEMW tie = {0};
             tie.mask = TCIF_TEXT;
-            tie.pszText = L"🔒 Enkripsi & Explorer";
+            tie.pszText = (LPWSTR)i18n_get(STR_TAB_ENCRYPT);
             TabCtrl_InsertItem(g_hTab, 0, &tie);
 
-            tie.pszText = L"🏷️ Bulk File Renamer";
+            tie.pszText = (LPWSTR)i18n_get(STR_TAB_RENAME);
             TabCtrl_InsertItem(g_hTab, 1, &tie);
+
+            tie.pszText = (LPWSTR)i18n_get(STR_TAB_DUPLICATES);
+            TabCtrl_InsertItem(g_hTab, 2, &tie);
 
             /* ================= VIEW 1A: SETUP / ONBOARDING ================= */
             g_hSetupGrp = CreateWindowExW(0, L"BUTTON", L" 🛡️ Pengaturan Keamanan Master & Email Pemulihan (Wajib) ",
@@ -2547,6 +2965,85 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             set_font(g_hRenStaticStatus, g_hFont);
             register_ctrl(g_hRenCtrls, &g_nRenCtrls, 64, g_hRenStaticStatus);
 
+            /* ================= VIEW 3: DUPLICATE FILE FINDER ================= */
+            g_hDupGrpFolder = CreateWindowExW(0, L"BUTTON", i18n_get(STR_DUP_GRP_TARGET),
+                WS_CHILD | BS_GROUPBOX, 0, 0, 700, 65, hWnd, (HMENU)IDC_DUP_GRP_FOLDER, NULL, NULL);
+            set_font(g_hDupGrpFolder, g_hFontBold);
+            register_ctrl(g_hDupCtrls, &g_nDupCtrls, 32, g_hDupGrpFolder);
+
+            g_hDupEditFolder = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", g_szLastFolder,
+                WS_CHILD | ES_AUTOHSCROLL | WS_TABSTOP, 0, 0, 300, 24, hWnd, (HMENU)IDC_DUP_EDIT_FOLDER, NULL, NULL);
+            set_font(g_hDupEditFolder, g_hFont);
+            register_ctrl(g_hDupCtrls, &g_nDupCtrls, 32, g_hDupEditFolder);
+
+            g_hDupBtnBrowse = CreateWindowExW(0, L"BUTTON", i18n_get(STR_BTN_BROWSE),
+                WS_CHILD | BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 80, 26, hWnd, (HMENU)IDC_DUP_BTN_BROWSE, NULL, NULL);
+            set_font(g_hDupBtnBrowse, g_hFont);
+            register_ctrl(g_hDupCtrls, &g_nDupCtrls, 32, g_hDupBtnBrowse);
+
+            g_hDupChkRecursive = CreateWindowExW(0, L"BUTTON", i18n_get(STR_CHK_RECURSIVE),
+                WS_CHILD | BS_AUTOCHECKBOX | WS_TABSTOP, 0, 0, 130, 22, hWnd, (HMENU)IDC_DUP_CHK_RECURSIVE, NULL, NULL);
+            set_font(g_hDupChkRecursive, g_hFont);
+            SendMessage(g_hDupChkRecursive, BM_SETCHECK, BST_CHECKED, 0);
+            register_ctrl(g_hDupCtrls, &g_nDupCtrls, 32, g_hDupChkRecursive);
+
+            g_hDupBtnScan = CreateWindowExW(0, L"BUTTON", i18n_get(STR_DUP_BTN_SCAN),
+                WS_CHILD | BS_DEFPUSHBUTTON | WS_TABSTOP, 0, 0, 115, 26, hWnd, (HMENU)IDC_DUP_BTN_SCAN, NULL, NULL);
+            set_font(g_hDupBtnScan, g_hFontBold);
+            register_ctrl(g_hDupCtrls, &g_nDupCtrls, 32, g_hDupBtnScan);
+
+            g_hDupList = CreateWindowExW(
+                WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
+                WS_CHILD | WS_BORDER | WS_TABSTOP | LVS_REPORT | LVS_SHOWSELALWAYS,
+                0, 0, 700, 300, hWnd, (HMENU)IDC_DUP_LISTVIEW, NULL, NULL
+            );
+            set_font(g_hDupList, g_hFont);
+            ListView_SetExtendedListViewStyle(g_hDupList, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_CHECKBOXES | LVS_EX_DOUBLEBUFFER);
+
+            LVCOLUMNW dc = {0};
+            dc.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
+            dc.cx = 240; dc.pszText = (LPWSTR)i18n_get(STR_DUP_COL_FILENAME); ListView_InsertColumn(g_hDupList, 0, &dc);
+            dc.cx = 170; dc.pszText = (LPWSTR)i18n_get(STR_DUP_COL_STATUS); ListView_InsertColumn(g_hDupList, 1, &dc);
+            dc.cx = 95;  dc.pszText = (LPWSTR)i18n_get(STR_DUP_COL_SIZE); ListView_InsertColumn(g_hDupList, 2, &dc);
+            dc.cx = 135; dc.pszText = (LPWSTR)i18n_get(STR_DUP_COL_MODIFIED); ListView_InsertColumn(g_hDupList, 3, &dc);
+            dc.cx = 320; dc.pszText = (LPWSTR)i18n_get(STR_DUP_COL_PATH); ListView_InsertColumn(g_hDupList, 4, &dc);
+            register_ctrl(g_hDupCtrls, &g_nDupCtrls, 32, g_hDupList);
+
+            g_hDupProgress = CreateWindowExW(0, PROGRESS_CLASSW, L"",
+                WS_CHILD | PBS_SMOOTH, 0, 0, 700, 16, hWnd, (HMENU)IDC_DUP_PROGRESS, NULL, NULL);
+            register_ctrl(g_hDupCtrls, &g_nDupCtrls, 32, g_hDupProgress);
+
+            g_hDupStaticStatus = CreateWindowExW(0, L"STATIC", i18n_get(STR_DUP_STATUS_READY),
+                WS_CHILD, 0, 0, 700, 20, hWnd, (HMENU)IDC_DUP_STATIC_STATUS, NULL, NULL);
+            set_font(g_hDupStaticStatus, g_hFont);
+            register_ctrl(g_hDupCtrls, &g_nDupCtrls, 32, g_hDupStaticStatus);
+
+            g_hDupBtnAutoSel = CreateWindowExW(0, L"BUTTON", i18n_get(STR_DUP_BTN_AUTOSEL),
+                WS_CHILD | BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 180, 28, hWnd, (HMENU)IDC_DUP_BTN_AUTOSEL, NULL, NULL);
+            set_font(g_hDupBtnAutoSel, g_hFont);
+            register_ctrl(g_hDupCtrls, &g_nDupCtrls, 32, g_hDupBtnAutoSel);
+
+            g_hDupBtnSelAll = CreateWindowExW(0, L"BUTTON", i18n_get(STR_DUP_BTN_SEL_ALL),
+                WS_CHILD | BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 100, 28, hWnd, (HMENU)IDC_DUP_BTN_SEL_ALL, NULL, NULL);
+            set_font(g_hDupBtnSelAll, g_hFont);
+            register_ctrl(g_hDupCtrls, &g_nDupCtrls, 32, g_hDupBtnSelAll);
+
+            g_hDupBtnDeselAll = CreateWindowExW(0, L"BUTTON", i18n_get(STR_DUP_BTN_DESEL_ALL),
+                WS_CHILD | BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 100, 28, hWnd, (HMENU)IDC_DUP_BTN_DESEL_ALL, NULL, NULL);
+            set_font(g_hDupBtnDeselAll, g_hFont);
+            register_ctrl(g_hDupCtrls, &g_nDupCtrls, 32, g_hDupBtnDeselAll);
+
+            g_hDupBtnDelete = CreateWindowExW(0, L"BUTTON", i18n_get(STR_DUP_BTN_DELETE),
+                WS_CHILD | BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 200, 28, hWnd, (HMENU)IDC_DUP_BTN_DELETE, NULL, NULL);
+            set_font(g_hDupBtnDelete, g_hFontBold);
+            register_ctrl(g_hDupCtrls, &g_nDupCtrls, 32, g_hDupBtnDelete);
+
+            g_hDupBtnStop = CreateWindowExW(0, L"BUTTON", i18n_get(STR_DUP_BTN_STOP),
+                WS_CHILD | BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 100, 28, hWnd, (HMENU)IDC_DUP_BTN_STOP, NULL, NULL);
+            set_font(g_hDupBtnStop, g_hFont);
+            EnableWindow(g_hDupBtnStop, FALSE);
+            register_ctrl(g_hDupCtrls, &g_nDupCtrls, 32, g_hDupBtnStop);
+
             /* Initialize localized texts & show initial page */
             update_ui_texts(hWnd);
             show_page(0);
@@ -2631,6 +3128,41 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                     handle_explorer_context_menu(hWnd, pt.x, pt.y);
                     return 0;
                 }
+            } else if (lpnm->hwndFrom == g_hDupList) {
+                if (lpnm->code == NM_DBLCLK) {
+                    int sel_idx = ListView_GetNextItem(g_hDupList, -1, LVNI_SELECTED);
+                    if (sel_idx >= 0) {
+                        LVITEMW lvi = {0};
+                        lvi.mask = LVIF_PARAM;
+                        lvi.iItem = sel_idx;
+                        if (ListView_GetItem(g_hDupList, &lvi) && lvi.lParam) {
+                            DuplicateItem *pIt = (DuplicateItem *)lvi.lParam;
+                            if (pIt && pIt->path) {
+                                ShellExecuteW(NULL, L"open", pIt->path, NULL, NULL, SW_SHOWNORMAL);
+                            }
+                        }
+                    }
+                    return 0;
+                } else if (lpnm->code == NM_RCLICK) {
+                    POINT pt;
+                    GetCursorPos(&pt);
+                    handle_duplicate_context_menu(hWnd, pt.x, pt.y);
+                    return 0;
+                } else if (lpnm->code == LVN_ITEMCHANGED) {
+                    NMLISTVIEW *nmlv = (NMLISTVIEW *)lParam;
+                    if ((nmlv->uNewState & LVIS_STATEIMAGEMASK) != (nmlv->uOldState & LVIS_STATEIMAGEMASK)) {
+                        BOOL checked = ListView_GetCheckState(g_hDupList, nmlv->iItem);
+                        LVITEMW lvi = {0};
+                        lvi.mask = LVIF_PARAM;
+                        lvi.iItem = nmlv->iItem;
+                        if (ListView_GetItem(g_hDupList, &lvi) && lvi.lParam) {
+                            DuplicateItem *pIt = (DuplicateItem *)lvi.lParam;
+                            if (pIt) {
+                                pIt->checked = (checked != FALSE);
+                            }
+                        }
+                    }
+                }
             }
             break;
         }
@@ -2639,6 +3171,9 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             HWND hTarget = (HWND)wParam;
             if (hTarget == g_hEncExplorerList) {
                 handle_explorer_context_menu(hWnd, (short)LOWORD(lParam), (short)HIWORD(lParam));
+                return 0;
+            } else if (hTarget == g_hDupList) {
+                handle_duplicate_context_menu(hWnd, (short)LOWORD(lParam), (short)HIWORD(lParam));
                 return 0;
             }
             break;
@@ -2653,6 +3188,7 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                 int cur_tab = TabCtrl_GetCurSel(g_hTab);
                 if (cur_tab == 0 && g_bAuthenticated) browse_folder_to_edit(hWnd, g_hEditFolder);
                 else if (cur_tab == 1) browse_folder_to_edit(hWnd, g_hRenEditFolder);
+                else if (cur_tab == 2) browse_folder_to_edit(hWnd, g_hDupEditFolder);
             } else if (wmId == IDM_FILE_EXIT || wmId == ID_MAINTRAY_EXIT) {
                 app_exit_completely(hWnd);
                 return 0;
@@ -2665,6 +3201,9 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             } else if (wmId == IDM_VIEW_RENAME) {
                 TabCtrl_SetCurSel(g_hTab, 1);
                 show_page(1);
+            } else if (wmId == IDM_VIEW_DUPLICATES) {
+                TabCtrl_SetCurSel(g_hTab, 2);
+                show_page(2);
             } else if (wmId == IDM_LANG_EN) {
                 if (i18n_get_language() != LANG_EN) {
                     i18n_set_language(LANG_EN);
@@ -2820,6 +3359,42 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             } else if (wmId == IDC_REN_BTN_UNDO && wmEvent == BN_CLICKED) {
                 undo_batch_rename(hWnd);
             }
+
+            /* Page 3 Duplicate Finder Actions */
+            else if (wmId == IDC_DUP_BTN_BROWSE && wmEvent == BN_CLICKED) {
+                browse_folder_to_edit(hWnd, g_hDupEditFolder);
+            } else if (wmId == IDC_DUP_BTN_SCAN && wmEvent == BN_CLICKED) {
+                start_duplicate_scan(hWnd);
+            } else if (wmId == IDC_DUP_BTN_STOP && wmEvent == BN_CLICKED) {
+                g_bDupCancel = true;
+                bool is_id = (i18n_get_language() == LANG_ID);
+                SetWindowTextW(g_hDupStaticStatus, is_id ? L"Membatalkan pemindaian..." : L"Cancelling duplicate scan...");
+            } else if (wmId == IDC_DUP_BTN_AUTOSEL && wmEvent == BN_CLICKED) {
+                if (g_pDupResults) {
+                    duplicate_auto_select_copies(g_pDupResults);
+                    populate_duplicate_listview();
+                }
+            } else if (wmId == IDC_DUP_BTN_SEL_ALL && wmEvent == BN_CLICKED) {
+                if (g_pDupResults) {
+                    for (DuplicateGroup *g = g_pDupResults->groups; g; g = g->next) {
+                        for (DuplicateItem *it = g->items; it; it = it->next) {
+                            it->checked = true;
+                        }
+                    }
+                    populate_duplicate_listview();
+                }
+            } else if (wmId == IDC_DUP_BTN_DESEL_ALL && wmEvent == BN_CLICKED) {
+                if (g_pDupResults) {
+                    for (DuplicateGroup *g = g_pDupResults->groups; g; g = g->next) {
+                        for (DuplicateItem *it = g->items; it; it = it->next) {
+                            it->checked = false;
+                        }
+                    }
+                    populate_duplicate_listview();
+                }
+            } else if (wmId == IDC_DUP_BTN_DELETE && wmEvent == BN_CLICKED) {
+                delete_selected_duplicates(hWnd);
+            }
             break;
         }
 
@@ -2895,6 +3470,60 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             break;
         }
 
+        case WM_APP_DUP_PROGRESS: {
+            DupProgressPayload *payload = (DupProgressPayload *)lParam;
+            if (payload) {
+                if (payload->phase == 1) {
+                    wchar_t msg[256];
+                    swprintf(msg, 256, i18n_get(STR_DUP_STATUS_SCANNING), payload->current);
+                    SetWindowTextW(g_hDupStaticStatus, msg);
+                } else if (payload->phase == 2) {
+                    if (payload->total > 0) {
+                        int pct = (int)((payload->current * 100) / payload->total);
+                        SendMessage(g_hDupProgress, PBM_SETPOS, pct, 0);
+                    }
+                    wchar_t msg[256];
+                    swprintf(msg, 256, i18n_get(STR_DUP_STATUS_HASHING), payload->current, payload->total);
+                    SetWindowTextW(g_hDupStaticStatus, msg);
+                }
+                free(payload);
+            }
+            return 0;
+        }
+
+        case WM_APP_DUP_FINISHED: {
+            g_bIsWorking = false;
+            if (g_hDupWorkerThread) {
+                CloseHandle(g_hDupWorkerThread);
+                g_hDupWorkerThread = NULL;
+            }
+
+            EnableWindow(g_hDupBtnScan, TRUE);
+            EnableWindow(g_hDupBtnAutoSel, TRUE);
+            EnableWindow(g_hDupBtnDelete, TRUE);
+            EnableWindow(g_hDupBtnStop, FALSE);
+
+            SendMessage(g_hDupProgress, PBM_SETPOS, 100, 0);
+
+            g_pDupResults = (DuplicateResults *)lParam;
+            if (g_pDupResults) {
+                duplicate_auto_select_copies(g_pDupResults);
+                populate_duplicate_listview();
+
+                if (g_pDupResults->group_count > 0) {
+                    wchar_t size_str[64];
+                    format_file_size_w(g_pDupResults->wasted_bytes, size_str, 64);
+                    wchar_t status_msg[512];
+                    swprintf(status_msg, 512, i18n_get(STR_DUP_STATUS_FOUND),
+                        g_pDupResults->total_duplicates, g_pDupResults->group_count, size_str);
+                    SetWindowTextW(g_hDupStaticStatus, status_msg);
+                } else {
+                    SetWindowTextW(g_hDupStaticStatus, i18n_get(STR_DUP_STATUS_NONE));
+                }
+            }
+            return 0;
+        }
+
         case WM_TIMER: {
             if (wParam == TIMER_AUTO_ENCRYPT_ID) {
                 int encCount = tracker_check_inactivity();
@@ -2944,32 +3573,7 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         }
 
         case WM_CLOSE: {
-            bool is_id = (i18n_get_language() == LANG_ID);
-            if (g_bIsWorking) {
-                int res = MessageBoxW(hWnd,
-                    is_id ? L"Proses sedang berjalan. Apakah Anda yakin ingin membatalkan dan menyembunyikan ke taskbar?" :
-                            L"A process is currently running. Are you sure you want to cancel and hide to taskbar?",
-                    is_id ? L"Konfirmasi" : L"Confirmation", MB_YESNO | MB_ICONQUESTION);
-                if (res != IDYES) return 0;
-                g_bCancelRequested = true;
-            }
-
-            if (g_bRememberFolder) {
-                wchar_t current_folder[MAX_PATH * 2] = {0};
-                GetWindowTextW(g_hEditFolder, current_folder, MAX_PATH * 2);
-                if (wcslen(current_folder) == 0) {
-                    GetWindowTextW(g_hRenEditFolder, current_folder, MAX_PATH * 2);
-                }
-                wchar_t clean[MAX_PATH * 2] = {0};
-                sanitize_path(current_folder, clean, MAX_PATH * 2);
-                if (clean[0] != L'\0') {
-                    save_settings(clean);
-                }
-            }
-
-            /* Hide window and show icon in taskbar / system tray */
-            ShowWindow(hWnd, SW_HIDE);
-            show_main_tray_icon(hWnd, true);
+            app_exit_completely(hWnd);
             return 0;
         }
 
@@ -2978,6 +3582,14 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             remove_main_tray_icon();
             clear_explorer_list_items(g_hEncExplorerList);
             tracker_encrypt_all_decrypted_files();
+            if (g_pDupResults) {
+                duplicate_free_results(g_pDupResults);
+                g_pDupResults = NULL;
+            }
+            if (g_hDupWorkerThread) {
+                CloseHandle(g_hDupWorkerThread);
+                g_hDupWorkerThread = NULL;
+            }
             if (g_hFont) DeleteObject(g_hFont);
             if (g_hFontBold) DeleteObject(g_hFontBold);
             if (g_hFontTitle) DeleteObject(g_hFontTitle);

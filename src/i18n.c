@@ -151,7 +151,37 @@ static const wchar_t *g_StringsEN[STR_COUNT] = {
     /* Status Labels */
     [STR_STATUS_ENCRYPTED_ENC]          = L"🔒 Encrypted (.enc)",
     [STR_STATUS_DECRYPTED_LOCK]         = L"🔓 Decrypted (Auto-lock 30m)",
-    [STR_STATUS_ORIGINAL_FILE]          = L"📄 Original File"
+    [STR_STATUS_ORIGINAL_FILE]          = L"📄 Original File",
+
+    /* Duplicate Finder */
+    [STR_TAB_DUPLICATES]                = L"🔍 Duplicate Finder",
+    [STR_DUP_GRP_TARGET]                = L" Target Folder & Duplicate Search Settings ",
+    [STR_DUP_BTN_SCAN]                  = L"🔍 Find Duplicates",
+    [STR_DUP_BTN_STOP]                  = L"⏹️ Stop Scan",
+    [STR_DUP_BTN_AUTOSEL]               = L"☑️ Auto-Select Copies",
+    [STR_DUP_BTN_DELETE]                = L"🗑️ Delete Selected",
+    [STR_DUP_BTN_SEL_ALL]               = L"Select All",
+    [STR_DUP_BTN_DESEL_ALL]             = L"Deselect All",
+    [STR_DUP_COL_FILENAME]              = L"File Name",
+    [STR_DUP_COL_STATUS]                = L"Status",
+    [STR_DUP_COL_SIZE]                  = L"Size",
+    [STR_DUP_COL_MODIFIED]              = L"Date Modified",
+    [STR_DUP_COL_PATH]                  = L"Full Path",
+    [STR_DUP_STATUS_READY]              = L"Ready to scan folder for duplicate files.",
+    [STR_DUP_STATUS_SCANNING]           = L"Scanning directory... %zu files found so far",
+    [STR_DUP_STATUS_HASHING]            = L"Comparing candidate files (%zu of %zu)...",
+    [STR_DUP_STATUS_FOUND]              = L"Found %zu duplicate copies across %zu groups. Reclaimable space: %ls",
+    [STR_DUP_STATUS_NONE]               = L"Scan finished: No duplicate files found.",
+    [STR_DUP_CONFIRM_DEL_TITLE]         = L"Confirm Duplicate Deletion",
+    [STR_DUP_CONFIRM_DEL_MSG]           = L"Are you sure you want to move %zu selected duplicate file(s) to the Recycle Bin?\nTotal space to reclaim: %ls",
+    [STR_DUP_DEL_SUCCESS]               = L"Successfully moved %zu duplicate file(s) to the Recycle Bin! Reclaimed %ls.",
+    [STR_DUP_ORIGINAL]                  = L"Original (Preserved)",
+    [STR_DUP_DUPLICATE]                 = L"Duplicate (Copy)",
+    [STR_DUP_MENU_OPEN]                 = L"Open File",
+    [STR_DUP_MENU_EXPLORER]             = L"Show in Explorer",
+    [STR_DUP_MENU_CHECK]                = L"Mark for Deletion",
+    [STR_DUP_MENU_UNCHECK]              = L"Unmark",
+    [STR_DUP_WARN_NO_SELECTION]         = L"No duplicate files are currently selected for deletion."
 };
 
 /* Indonesian translation table */
@@ -302,7 +332,37 @@ static const wchar_t *g_StringsID[STR_COUNT] = {
     /* Status Labels */
     [STR_STATUS_ENCRYPTED_ENC]          = L"🔒 Terenkripsi (.enc)",
     [STR_STATUS_DECRYPTED_LOCK]         = L"🔓 Didekripsi (Auto-lock 30m)",
-    [STR_STATUS_ORIGINAL_FILE]          = L"📄 File Asli"
+    [STR_STATUS_ORIGINAL_FILE]          = L"📄 File Asli",
+
+    /* Duplicate Finder */
+    [STR_TAB_DUPLICATES]                = L"🔍 Cari Duplikat",
+    [STR_DUP_GRP_TARGET]                = L" Pengaturan Folder & Pencarian Berkas Duplikat ",
+    [STR_DUP_BTN_SCAN]                  = L"🔍 Cari Duplikat",
+    [STR_DUP_BTN_STOP]                  = L"⏹️ Batalkan",
+    [STR_DUP_BTN_AUTOSEL]               = L"☑️ Pilih Otomatis Salinan",
+    [STR_DUP_BTN_DELETE]                = L"🗑️ Hapus Duplikat Terpilih",
+    [STR_DUP_BTN_SEL_ALL]               = L"Pilih Semua",
+    [STR_DUP_BTN_DESEL_ALL]             = L"Batal Pilih",
+    [STR_DUP_COL_FILENAME]              = L"Nama Berkas",
+    [STR_DUP_COL_STATUS]                = L"Status",
+    [STR_DUP_COL_SIZE]                  = L"Ukuran",
+    [STR_DUP_COL_MODIFIED]              = L"Tanggal Dimodifikasi",
+    [STR_DUP_COL_PATH]                  = L"Path Lengkap",
+    [STR_DUP_STATUS_READY]              = L"Siap memindai folder untuk mendeteksi berkas duplikat.",
+    [STR_DUP_STATUS_SCANNING]           = L"Memindai direktori... %zu berkas ditemukan",
+    [STR_DUP_STATUS_HASHING]            = L"Membandingkan isi berkas identik (%zu dari %zu)...",
+    [STR_DUP_STATUS_FOUND]              = L"Ditemukan %zu salinan duplikat dalam %zu grup. Ruang terbuang: %ls",
+    [STR_DUP_STATUS_NONE]               = L"Pemindaian selesai: Tidak ditemukan berkas duplikat.",
+    [STR_DUP_CONFIRM_DEL_TITLE]         = L"Konfirmasi Penghapusan Duplikat",
+    [STR_DUP_CONFIRM_DEL_MSG]           = L"Apakah Anda yakin ingin memindahkan %zu berkas salinan duplikat ke Recycle Bin?\nTotal ruang yang dapat dihemat: %ls",
+    [STR_DUP_DEL_SUCCESS]               = L"Berhasil memindahkan %zu berkas duplikat ke Recycle Bin! Menghemat %ls ruang.",
+    [STR_DUP_ORIGINAL]                  = L"Asli (Dipertahankan)",
+    [STR_DUP_DUPLICATE]                 = L"Duplikat (Salinan)",
+    [STR_DUP_MENU_OPEN]                 = L"Buka Berkas",
+    [STR_DUP_MENU_EXPLORER]             = L"Tampilkan di Explorer",
+    [STR_DUP_MENU_CHECK]                = L"Tandai untuk Dihapus",
+    [STR_DUP_MENU_UNCHECK]              = L"Hilangkan Tanda",
+    [STR_DUP_WARN_NO_SELECTION]         = L"Tidak ada berkas duplikat yang ditandai untuk dihapus."
 };
 
 void i18n_init(AppLanguage default_lang) {

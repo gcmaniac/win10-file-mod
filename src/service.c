@@ -685,6 +685,13 @@ static DWORD WINAPI explorer_monitor_thread(LPVOID lpParam) {
 /* ------------------------------------------------------------------------- */
 
 static void open_main_application(void) {
+    HWND hExisting = FindWindowW(L"Win10FileModMainClass", NULL);
+    if (hExisting) {
+        ShowWindow(hExisting, SW_SHOW);
+        ShowWindow(hExisting, SW_RESTORE);
+        SetForegroundWindow(hExisting);
+        return;
+    }
     wchar_t exePath[MAX_PATH * 2] = {0};
     GetModuleFileNameW(NULL, exePath, MAX_PATH * 2 - 1);
     ShellExecuteW(NULL, L"open", exePath, NULL, NULL, SW_SHOWNORMAL);

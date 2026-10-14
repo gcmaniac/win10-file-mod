@@ -56,9 +56,10 @@ Semua modul dikompilasi menjadi satu berkas biner mandiri yang sangat ringan tan
 - **Rekonsiliasi Startup & Reboot**: Saat aplikasi dinyalakan kembali setelah crash atau restart sistem operasi, seluruh berkas terbuka yang tertinggal akan otomatis diidentifikasi dan langsung dienkripsi sebelum pengguna dapat mengaksesnya.
 - **Perlindungan Penutupan Penuh**: Menutup aplikasi secara tuntas akan mengenkripsi seluruh berkas yang masih terbuka di sistem.
 
-### 5. 🔕 Sembunyikan ke Taskbar Tray (Close-to-Tray)
-- **Perlindungan Berkelanjutan**: Menekan tombol **X** (tutup) menyembunyikan jendela ke area notifikasi taskbar system tray (`SW_HIDE`), menjaga layanan pemantau tetap aktif di latar belakang.
-- **Menu Tray Klik Kanan**: Klik kanan ikon tray untuk membuka jendela kembali (**Open**) atau keluar dari aplikasi secara penuh (**Exit Completely**).
+### 5. 🛡️ Penegakan Instansi Tunggal (Strict Single Instance) & Penutupan Bersih
+- **Proteksi Instansi Tunggal**: Memanfaatkan Windows Named Mutex (`Win10FileMod_App_SingleInstance_Mutex`) untuk memastikan hanya ada tepat 1 instansi jendela aplikasi yang berjalan.
+- **Fokus Otomatis Jendela**: Jika pengguna membuka kembali aplikasi, jendela yang sudah berjalan otomatis dipulihkan (*restored*) dan difokuskan ke depan layar.
+- **Penutupan Bersih Tanpa Ikon Ganda**: Menutup jendela ([X] / Close) keluar dari antarmuka secara tuntas dan membersihkan ikon tray, mencegah penumpukan ikon ganda pada taskbar notification area, sementara background daemon service tetap berjalan mandiri jika diaktifkan.
 
 ### 6. ⚙️ Layanan Latar Belakang & Integrasi Shell
 - **Dekripsi Otomatis Folder Explorer**: Layanan pemantau latar belakang (`IShellWindows` COM) mendeteksi saat pengguna membuka folder terenkripsi di File Explorer Windows dan mendekripsinya secara otomatis.
@@ -78,6 +79,15 @@ Semua modul dikompilasi menjadi satu berkas biner mandiri yang sangat ringan tan
 - **Pratinjau Langsung (Real-Time Live Preview)**: Kolom *"Nama File Baru"* langsung terbarui secara instan saat Anda mengetik konfigurasi metode.
 - **Deteksi Tabrakan Nama (Collision Detection)**: Peringatan otomatis sebelum eksekusi jika terdapat nama tujuan yang sama atau berkas yang sudah ada di disk.
 - **Riwayat Undo Multi-Langkah**: Batalkan perubahan nama massal dan kembalikan ke nama asli hanya dengan satu klik tombol undo.
+
+### 9. 🔍 Pencari Berkas Duplikat (Duplicate File Finder)
+- **Algoritma 2-Fase Cepat & Akurat 100%**:
+  - **Fase 1 (Penyaringan Ukuran Cepat)**: Memindai folder (opsi rekursif) dan mengelompokkan berkas berdasarkan ukuran bit. Berkas dengan ukuran unik dilewati tanpa membaca isi disk, menghemat I/O secara masif.
+  - **Fase 2 (Verifikasi Konten SHA-256)**: Berkas-berkas dengan ukuran yang sama diverifikasi menggunakan hash kriptografi **SHA-256** (via Windows CNG `bcrypt.dll`). Hanya berkas dengan ukuran dan hash identik 100% yang dinyatakan sebagai duplikat.
+- **ListView Interaktif dengan Checkbox**: Menampilkan *Nama Berkas*, *Status (Asli/Salinan)*, *Ukuran*, *Tanggal Modifikasi*, dan *Path Lengkap*.
+- **Pilih Otomatis Salinan (Auto-Select Copies)**: Sekali klik untuk menandai semua berkas salinan duplikat dan mempertahankan 1 berkas asli di setiap grup secara aman.
+- **Penghapusan Aman ke Windows Recycle Bin**: Berkas duplikat terpilih dipindahkan ke Recycle Bin menggunakan `SHFileOperationW` (`FOF_ALLOWUNDO`) sehingga dapat dipulihkan jika sewaktu-waktu dibutuhkan, lengkap dengan konfirmasi estimasi ruang penyimpanan yang dihemat.
+- **Menu Konteks Klik Kanan Lengkap**: Buka berkas, tampilkan dan sorot berkas di Windows Explorer, tandai/batalkan tanda, atau hapus berkas tertentu.
 
 ---
 
@@ -100,6 +110,7 @@ win10-file-mod/
 ├── include/                        # Header C publik
 │   ├── common.h                    # Konstanta umum & struktur terbagi
 │   ├── crypto.h                    # API Windows CNG AES-256-GCM & PBKDF2
+│   ├── duplicate.h                 # API pencari berkas duplikat SHA-256 & Recycle Bin
 │   ├── i18n.h                      # Tabel string multi-bahasa & API kendali
 │   ├── renamer.h                   # Struktur renamer, deteksi tabrakan & undo
 │   ├── scanner.h                   # Penelusur rekursif direktori
@@ -110,6 +121,7 @@ win10-file-mod/
 │
 ├── src/                            # Berkas sumber kode C
 │   ├── crypto.c                    # Enkripsi/dekripsi CNG BCrypt & CSPRNG
+│   ├── duplicate.c                 # Mesin pencari duplikat 2-tier (ukuran + SHA-256)
 │   ├── i18n.c                      # Tabel pencarian string terjemahan
 │   ├── main.c                      # Titik masuk WinMain & parser CLI
 │   ├── renamer.c                   # Metode renamer, pengurai tag & riwayat undo
@@ -122,6 +134,7 @@ win10-file-mod/
 │
 ├── tests/                          # Rangkaian pengujian otomatis
 │   ├── test_crypto.c               # 9 rangkaian uji CNG AES-GCM, salt, dan shredder
+│   ├── test_duplicate.c            # Pengujian pengelompokan duplikat SHA-256 & auto-select
 │   ├── test_i18n.c                 # Verifikasi cakupan 100% kunci String ID
 │   ├── test_renamer.c              # Pengujian metode renamer & deteksi tabrakan
 │   └── test_service.c              # Pengujian auto-dekripsi, tracker & rekonsiliasi
@@ -156,7 +169,7 @@ make
 ```cmd
 windres src\resources.rc -O coff -o src\resources.o
 gcc -O2 -Wall -Wextra -municode -mwindows -Iinclude ^
-    src\main.c src\crypto.c src\vault.c src\scanner.c src\shredder.c src\renamer.c src\i18n.c src\service.c src\ui.c src\resources.o ^
+    src\main.c src\crypto.c src\vault.c src\scanner.c src\shredder.c src\renamer.c src\duplicate.c src\i18n.c src\service.c src\ui.c src\resources.o ^
     -lbcrypt -lcomctl32 -lshell32 -lole32 -loleaut32 -luuid -lshlwapi ^
     -o win10_file_enc.exe
 ```
@@ -165,7 +178,7 @@ gcc -O2 -Wall -Wextra -municode -mwindows -Iinclude ^
 
 ## 🧪 Pengujian Otomatis (Automated Testing)
 
-Tersedia empat rangkaian pengujian mandiri untuk memvalidasi seluruh fungsionalitas tanpa membuka UI grafis:
+Tersedia lima rangkaian pengujian mandiri untuk memvalidasi seluruh fungsionalitas tanpa membuka UI grafis:
 
 ```cmd
 # 1. Pengujian Kriptografi & Shredder (9 pengujian)
@@ -183,6 +196,10 @@ tests\test_service.exe
 # 4. Pengujian Cakupan Multi-Bahasa (i18n)
 gcc -O2 -Iinclude tests\test_i18n.c src\i18n.c -o tests\test_i18n.exe
 tests\test_i18n.exe
+
+# 5. Pengujian Mesin Pencari Berkas Duplikat (SHA-256 & Auto-Select)
+gcc -O2 -Iinclude tests\test_duplicate.c src\duplicate.c -lbcrypt -lshell32 -o tests\test_duplicate.exe
+tests\test_duplicate.exe
 ```
 
 ---

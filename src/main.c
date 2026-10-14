@@ -49,13 +49,23 @@ int WINAPI wWinMain(
         LocalFree(szArgList);
     }
 
-    /* If an instance is already running (e.g. hidden in taskbar/tray), restore and focus it */
-    HWND hExisting = FindWindowW(L"Win10FileModMainClass", NULL);
-    if (hExisting) {
-        ShowWindow(hExisting, SW_SHOW);
-        ShowWindow(hExisting, SW_RESTORE);
-        SetForegroundWindow(hExisting);
-        SendMessageW(hExisting, WM_COMMAND, MAKEWPARAM(ID_MAINTRAY_RESTORE, 0), 0);
+    /* Ensure strictly single instance of the GUI application is running */
+    HANDLE hAppMutex = CreateMutexW(NULL, TRUE, L"Win10FileMod_App_SingleInstance_Mutex");
+    if (!hAppMutex || GetLastError() == ERROR_ALREADY_EXISTS) {
+        if (hAppMutex) CloseHandle(hAppMutex);
+        /* Another instance is already active. Find existing window and bring to front */
+        HWND hExisting = NULL;
+        for (int i = 0; i < 25; i++) {
+            hExisting = FindWindowW(L"Win10FileModMainClass", NULL);
+            if (hExisting) break;
+            Sleep(100);
+        }
+        if (hExisting) {
+            ShowWindow(hExisting, SW_SHOW);
+            ShowWindow(hExisting, SW_RESTORE);
+            SetForegroundWindow(hExisting);
+            SendMessageW(hExisting, WM_COMMAND, MAKEWPARAM(ID_MAINTRAY_RESTORE, 0), 0);
+        }
         return 0;
     }
 
@@ -125,6 +135,11 @@ int WINAPI wWinMain(
 
     /* Cleanup cryptographic handles before termination */
     crypto_cleanup();
+
+    if (hAppMutex) {
+        ReleaseMutex(hAppMutex);
+        CloseHandle(hAppMutex);
+    }
 
     return (int)msg.wParam;
 }

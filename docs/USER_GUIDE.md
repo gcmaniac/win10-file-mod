@@ -17,10 +17,10 @@ Welcome to the **Win10 File Encryptor & Bulk Renamer** User Guide. This comprehe
    - [Column Sorting (Name, Type, Size, Date, Status)](#column-sorting)
    - [Encrypting Selected Files & Folders](#encrypting-selected-files--folders)
    - [Decrypting & Opening Protected Files](#decrypting--opening-protected-files)
-5. [Inactivity Auto-Lock & Automatic Re-Encryption](#5-inactivity-auto-lock--automatic-re-encryption)
+5. [Inactivity Auto-Lock, Single Instance & Clean Exit](#5-inactivity-auto-lock-single-instance--clean-exit)
    - [30-Minute Inactivity Auto-Lock](#30-minute-inactivity-auto-lock)
-   - [Close-to-Tray (Hide to Taskbar)](#close-to-tray-hide-to-taskbar)
-   - [Exit Security (Full Re-Encryption on Close)](#exit-security-full-re-encryption-on-close)
+   - [Strict Single Instance Protection](#strict-single-instance-protection)
+   - [Clean Window Exit (No Duplicate Tray Icons)](#clean-window-exit-no-duplicate-tray-icons)
    - [Startup Crash & Reboot Recovery](#startup-crash--reboot-recovery)
 6. [Windows Explorer Background Service Integration](#6-windows-explorer-background-service-integration)
    - [Enabling the Auto-Decrypt Service](#enabling-the-auto-decrypt-service)
@@ -32,8 +32,15 @@ Welcome to the **Win10 File Encryptor & Bulk Renamer** User Guide. This comprehe
    - [Method 4: Case Conversion](#method-4-case-conversion)
    - [Method 5: Trim Characters](#method-5-trim-characters)
    - [Collision Detection & Undo](#collision-detection--undo)
-8. [Multi-Language Switching](#8-multi-language-switching)
-9. [Frequently Asked Questions (FAQ)](#9-frequently-asked-questions-faq)
+8. [Duplicate File Finder](#8-duplicate-file-finder)
+   - [Selecting Folders & Recursive Subfolders](#selecting-folders--recursive-subfolders)
+   - [Fast 2-Tier Engine (File Size & SHA-256 Hash)](#fast-2-tier-engine-file-size--sha-256-hash)
+   - [Interactive Checkbox Results View](#interactive-checkbox-results-view)
+   - [Auto-Select Duplicate Copies](#auto-select-duplicate-copies)
+   - [Safe Recycling via Windows Recycle Bin](#safe-recycling-via-windows-recycle-bin)
+   - [Right-Click Context Menu](#right-click-context-menu)
+9. [Multi-Language Switching](#9-multi-language-switching)
+10. [Frequently Asked Questions (FAQ)](#10-frequently-asked-questions-faq)
 
 ---
 
@@ -116,32 +123,30 @@ Click any column header to sort items immediately:
 
 ---
 
-## 5. Inactivity Auto-Lock & Automatic Re-Encryption
+## 5. Inactivity Auto-Lock, Single Instance & Clean Exit
 
 To prevent sensitive plaintext data from lingering on disk, the application enforces automated multi-layered re-encryption:
 
 ### 30-Minute Inactivity Auto-Lock
 - Any file opened or decrypted enters the **Decrypted File Tracker**.
-- While the program is running (whether visible or minimized to the taskbar tray), a background monitor evaluates file access every 15 seconds.
+- While the program is running, a background monitor evaluates file access every 15 seconds.
 - If an open file has not been accessed or edited for **30 consecutive minutes**:
   - The software automatically re-encrypts the file to `.enc` using AES-256-GCM.
-  - The temporary plaintext copy is completely shredded from disk.
+  - The temporary plaintext copy is completely shredded from disk (*secure shredding*).
   - A Windows system tray balloon notification alerts you that the file has been re-locked.
 - **Active Editing Reset**: If you modify or save the file in your editor (e.g., Word, VS Code, Notepad), the file timestamp update is automatically detected, resetting the 30-minute timer.
 
-### Close-to-Tray (Hide to Taskbar)
-- Clicking the window close button (**X**) or pressing `Alt+F4` does **not** terminate the application; instead, it **hides the program to the system tray (taskbar notification area)**.
-- While hidden, background auto-encryption and Explorer folder watchers remain fully operational.
-- To restore the window:
-  - **Left-click** or **double-click** the system tray shield icon.
-  - Or right-click the tray icon and select **🖥️ Open Win10 File Encryptor**.
-  - Or launch `win10_file_enc.exe` again from your desktop/Start menu (the existing instance will bring itself to the front).
+### Strict Single Instance Protection
+- The application is protected by a system-wide **Windows Named Mutex** (`Win10FileMod_App_SingleInstance_Mutex`).
+- Exactly **one application window** is allowed to run at any time.
+- If you launch `win10_file_enc.exe` while the program is already active:
+  - The running instance automatically restores itself (if minimized) and is brought to the foreground.
+  - The second instance exits cleanly and immediately, preventing duplicate memory usage and tracker collisions.
 
-### Exit Security (Full Re-Encryption on Close)
-When you choose to exit completely via **File ➔ Exit** (`Berkas ➔ Keluar`) or by right-clicking the tray icon and selecting **❌ Exit Completely** (`Keluar Sepenuhnya`):
-- All files currently tracked in the decrypted state are **immediately re-encrypted to `.enc`**.
-- All plaintext versions are shredded.
-- No unprotected data is left on your hard drive after the program terminates.
+### Clean Window Exit (No Duplicate Tray Icons)
+- Clicking the window close button (**X**) or pressing `Alt+F4` **cleanly terminates the GUI window and removes its tray icon**.
+- This guarantees no duplicate tray icons accumulate in the Windows taskbar notification area, leaving only the background daemon icon if the service is running.
+- **Full Exit Encryption**: Before the GUI closes, all files currently tracked in the decrypted state are **immediately re-encrypted to `.enc`** and their plaintext versions are shredded permanently.
 
 ### Startup Crash & Reboot Recovery
 If your computer experiences a sudden reboot, power outage, or system crash:
@@ -204,18 +209,69 @@ Click the **🏷️ Bulk File Renamer** tab in the main header to access the bat
 
 ---
 
-## 8. Multi-Language Switching
+## 8. Duplicate File Finder
+
+Click the **🔍 Duplicate File Finder** tab in the top navigation bar to scan, identify, and safely clean up duplicate files within any chosen directory to reclaim hard disk storage space.
+
+### Selecting Folders & Recursive Subfolders
+1. Click the **Browse...** (`Pilih Folder...`) button to select the target directory you wish to inspect.
+2. Check **Scan Subfolders** (`Pindai Sub-folder`) to include all child directories recursively, or uncheck it to scan only the top-level directory.
+3. Click **Scan Duplicates** (`Mulai Pindai`) to initiate the scanning process. You can abort the scan at any point by clicking **Stop** (`Hentikan`).
+
+### Fast 2-Tier Engine (File Size & SHA-256 Hash)
+The scanner executes a high-performance two-tier identification pipeline:
+- **Tier 1 (Rapid Size Grouping)**: Queries file size attributes directly from the Windows file system. Any file with a unique byte size is instantly bypassed without performing disk reads, saving massive I/O overhead.
+- **Tier 2 (SHA-256 Content Verification)**: Only files that share exact byte-size matches are read from disk and hashed using cryptographic **SHA-256** (via Windows CNG `bcrypt.dll`). Files are only classified as duplicates when their binary content hashes match 100%.
+
+### Interactive Checkbox Results View
+Identified duplicate files are grouped and listed in an interactive report view table with the following columns:
+- **Checkbox**: Mark or unmark files designated for deletion.
+- **File Name**: Name of the duplicate file.
+- **Status**:
+  - `[Original]` (`[Asli]`): The primary original copy retained in the duplicate cluster.
+  - `[Copy]` (`[Salinan]`): Redundant duplicate copies identified with identical content.
+- **Size**: Formatted file size (`KB`, `MB`, `GB`).
+- **Date Modified**: Last modification timestamp.
+- **Full Path**: Absolute storage path on the system.
+
+### Auto-Select Duplicate Copies
+To cleanly mark redundant copies while keeping original files intact:
+1. Click **Auto-Select Copies** (`Pilih Otomatis Salinan`).
+2. The software automatically checks all files marked `[Copy]` while **safely keeping exactly 1 `[Original]` file unchecked** in each duplicate cluster.
+3. Convenient **Select All** (`Pilih Semua`) and **Deselect All** (`Batal Pilih Semua`) buttons are also available.
+
+### Safe Recycling via Windows Recycle Bin
+1. After reviewing checked items, click **Delete to Recycle Bin** (`Hapus ke Recycle Bin`).
+2. A confirmation dialog presents the total number of files selected and the **exact disk space to be freed** (e.g., *Are you sure you want to move 12 duplicate files (345.2 MB) to the Recycle Bin?*).
+3. Selected files are sent to the Windows Recycle Bin using the native Shell API (`SHFileOperationW` with `FOF_ALLOWUNDO`), ensuring files **can be restored at any time** if needed.
+
+### Right-Click Context Menu
+Right-click any row in the duplicate list to access immediate actions:
+- **Open File**: Opens the file with its associated Windows application.
+- **Show in Explorer**: Opens Windows Explorer with the specific file selected and highlighted.
+- **Toggle Check**: Checks or unchecks the selected item.
+- **Delete This File**: Immediately sends only the selected file to the Recycle Bin.
+
+---
+
+## 9. Multi-Language Switching
 
 The software features complete live runtime localization:
 - Open the **🌐 Language** (`🌐 Bahasa`) menu in the top menu bar.
 - Choose between:
   - **English (Default)**
   - **Bahasa Indonesia**
-- All labels, dialogs, buttons, list columns, and system tray notifications switch instantly without requiring an application restart.
+- All labels, dialogs, buttons, list columns, page tabs, and system tray notifications switch instantly without requiring an application restart.
 
 ---
 
-## 9. Frequently Asked Questions (FAQ)
+## 10. Frequently Asked Questions (FAQ)
+
+#### Q: Why doesn't the application allow opening a second window when already running?
+**A**: To protect encryption integrity and prevent tracker database corruption (`win10_file_enc_tracker.dat`), the app enforces **Strict Single Instance** via a Windows Named Mutex (`Win10FileMod_App_SingleInstance_Mutex`). Launching the executable again safely restores the existing window to the foreground.
+
+#### Q: Why don't duplicate tray icons appear when closing the application?
+**A**: The window close procedure has been optimized. Clicking the window Close button ([X]) cleanly terminates the GUI process and removes its tray icon. The background service (`--service`) can run independently without duplicate icons cluttering the notification area.
 
 #### Q: Where are encrypted files saved?
 **A**: Encrypted files are created in the exact same directory as the original file, with the `.enc` extension appended (e.g., `report.docx` becomes `report.docx.enc`).
@@ -226,5 +282,5 @@ The software features complete live runtime localization:
 #### Q: Can files be recovered after secure shredding?
 **A**: **No.** Original files are physically overwritten with multiple patterns and flushed directly to hardware disk controller buffers before removal. File recovery software (such as Recuva) will only find wiped zero-bytes.
 
-#### Q: How do I completely close the application if 'X' only hides it?
-**A**: Use **File ➔ Exit** (`Berkas ➔ Keluar`) from the top menu, or right-click the system tray icon and click **Exit Completely** (`Keluar Sepenuhnya`).
+#### Q: Are duplicate files deleted permanently?
+**A**: **No.** Deletion in the Duplicate File Finder moves files to the Windows Recycle Bin (`FOF_ALLOWUNDO`). You can open the Recycle Bin on your desktop and restore any file at any time.

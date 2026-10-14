@@ -1,0 +1,65 @@
+# ==========================================
+# C / Windows Build Artifacts
+# ==========================================
+*.exe
+*.o
+*.obj
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.pdb
+*.ilk
+*.exp
+
+# Resource compilation outputs
+src/*.o
+
+# ==========================================
+# Runtime & Generated Application Data
+# ==========================================
+*.dat
+*.ini
+*.log
+
+# Project specific data files
+win10_file_enc.exe
+win10_file_enc_vault.dat
+win10_file_enc_tracker.dat
+win10_file_enc_settings.ini
+email_reset_dispatch_audit.log
+
+# Test binaries & generated test data
+tests/*.exe
+tests/*.dat
+
+# ==========================================
+# Temporary & Backup Files
+# ==========================================
+*.tmp
+*.temp
+*.bak
+*~
+
+# ==========================================
+# IDEs and Code Editors
+# ==========================================
+.vscode/
+.vs/
+.idea/
+*.suo
+*.user
+*.userosv
+*.sln.docstates
+
+# ==========================================
+# Operating System Files
+# ==========================================
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
