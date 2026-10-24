@@ -2,6 +2,7 @@
 #define DUPLICATE_H
 
 #include "common.h"
+#include "scanner.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -48,6 +49,16 @@ typedef void (*DuplicateProgressCallback)(
 DuplicateResults* duplicate_find(
     const wchar_t *folder_path,
     bool recursive,
+    DuplicateProgressCallback cb,
+    void *user_data,
+    volatile bool *cancel_flag
+);
+
+DuplicateResults* duplicate_find_filtered(
+    const wchar_t *folder_path,
+    bool recursive,
+    ScannerFileType file_type,
+    uint64_t max_file_size_bytes,
     DuplicateProgressCallback cb,
     void *user_data,
     volatile bool *cancel_flag

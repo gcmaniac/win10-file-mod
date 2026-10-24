@@ -78,6 +78,8 @@ win10-file-mod/
 ├── include/                        # Public C headers
 │   ├── common.h                    # Core constants, type definitions, and path limits
 │   ├── crypto.h                    # Windows CNG AES-256-GCM AEAD & PBKDF2 API
+│   ├── kiosapi_key.h               # Master Password protection for the KiosAPI key
+│   ├── model_tester.h              # KiosAPI catalog loader and model probes
 │   ├── duplicate.h                 # SHA-256 duplicate finder engine & Recycle Bin API
 │   ├── i18n.h                      # StringId enumeration & language control API
 │   ├── renamer.h                   # Renamer structures, methods, collision & undo API
@@ -89,6 +91,9 @@ win10-file-mod/
 │
 ├── src/                            # Implementation files
 │   ├── crypto.c                    # CNG BCrypt encrypt/decrypt, PBKDF2, CSPRNG
+│   ├── kiosapi_key.c               # Encrypted key storage and in-memory unlock
+│   ├── model_tester.c              # SQLite queries, WinHTTP requests, and probe history
+│   ├── vscode_model_config.c       # Safe VS Code model JSON update and backup
 │   ├── duplicate.c                 # 2-tier duplicate finder engine (size + SHA-256)
 │   ├── i18n.c                      # Localized string lookup tables (EN / ID)
 │   ├── main.c                      # WinMain entry point, CLI dispatch & single instance
@@ -104,9 +109,13 @@ win10-file-mod/
 │   ├── test_crypto.c               # 9-suite verification of CNG AES-GCM, salt, shred
 │   ├── test_duplicate.c            # Duplicate group clustering, SHA-256, and auto-select
 │   ├── test_i18n.c                 # 100% translation coverage across all String IDs
+│   ├── test_model_tester.c         # Catalog, measured availability, and price sorting
+│   ├── test_vscode_model_config.c  # VS Code config preservation and duplicate handling
 │   ├── test_renamer.c              # Rename methods, tag formatting, collision detection
+│   ├── test_scanner_filter.c       # Extension matching and maximum-size filters
 │   └── test_service.c              # Auto-decrypt, inactivity tracker, startup recovery
 │
+├── kiosapi-models.db               # KiosAPI model and pricing catalog
 ├── build.bat                       # MinGW-w64 GCC build script (1-click compile)
 ├── Makefile                        # GNU Make build script
 ├── README.md                       # Project overview (English)
@@ -339,6 +348,14 @@ When the user clicks the window close button ([X] / Close) or presses `Alt+F4`:
 - **Sorting Comparator**: `ListView_SortItems(hList, explorer_list_compare_func, lParamSort)`.
 - **Header Sort Arrows**: Dynamically queries `ListView_GetHeader` and applies `HDF_SORTUP` / `HDF_SORTDOWN` to `HDITEMW.fmt`.
 
+### Encryption Filters and KiosAPI Model Tester
+- Encrypt Explorer offers all-files/documents/images/videos filters and a maximum size in MB (`0` means unlimited). Extension and size filters are applied to scanner results before encryption for both selected files and folder scans.
+- `kiosapi_key.c` unlocks the key only after vault authentication. On first use it encrypts `kiosapi-key.txt` to a temporary `.wkey` file, verifies AES-GCM decryption, commits the encrypted file, then overwrites and removes plaintext. The unlocked key remains in session memory and must never be logged.
+- `model_tester.c` reads the `models` catalog from `kiosapi-models.db`, sends sequential HTTPS probes through WinHTTP after user confirmation, and stores results in the SQLite `model_test_results` table.
+- Model Tester price filters are evaluated against the catalog's per-million input/output prices. Blank fields mean no limit; if a maximum is set, rows without that catalog price are excluded. Both **Test all models** and **Scan Selected** operate on the visible filtered set.
+- `vscode_model_config.c` validates the provider-array JSON and edits only the existing `KiosAPI All` provider using SQLite JSON functions. It preserves other providers/model entries, skips duplicate IDs, and reports a missing provider rather than silently creating one. The update is written to a temporary file and atomically replaces the config only after a timestamped backup succeeds.
+- Availability is the local probe success ratio, not official uptime or an SLA. Prices come from `ui_input_price_per_1m` and `ui_output_price_per_1m`; latency represents the latest request. Probes may incur API charges.
+
 ---
 
 ## 10. Windows Explorer Shell & Daemon Service (`service.c`)
@@ -359,7 +376,7 @@ When the user clicks the window close button ([X] / Close) or presses `Alt+F4`:
 
 ## 11. Internationalization Subsystem (`i18n.c`, `i18n.h`)
 
-All UI strings, menu items, table headers, dialog messages, and tabs are referenced via the `StringId` enum (total **160 String IDs**):
+All UI strings, menu items, table headers, dialog messages, and tabs are referenced via the `StringId` enum:
 - Default Language: `LANG_EN` (English).
 - Supported Languages: `LANG_EN`, `LANG_ID` (Bahasa Indonesia).
 - Runtime Switching: Calling `i18n_set_language` followed by `update_ui_texts(hWnd)` re-applies all titles, tabs, menus, and column headers dynamically without requiring an application restart.
@@ -374,21 +391,27 @@ Compile using MinGW-w64 GCC with Unicode and Windows subsystems enabled:
 ```cmd
 windres src\resources.rc -O coff -o src\resources.o
 gcc -O2 -Wall -Wextra -municode -mwindows -Iinclude ^
-    src\main.c src\crypto.c src\vault.c src\scanner.c src\shredder.c src\renamer.c src\duplicate.c src\i18n.c src\service.c src\ui.c src\resources.o ^
-    -lbcrypt -lcomctl32 -lshell32 -lole32 -loleaut32 -luuid -lshlwapi ^
+    src\main.c src\crypto.c src\vault.c src\scanner.c src\shredder.c src\renamer.c src\duplicate.c src\i18n.c src\service.c src\kiosapi_key.c src\model_tester.c src\ui.c src\resources.o ^
+    -lbcrypt -lcomctl32 -lshell32 -lole32 -loleaut32 -luuid -lshlwapi -lwinhttp -lsqlite3 ^
     -o win10_file_enc.exe
 ```
 
 ### Test Suites
-Five standalone test suites validate functionality without launching the GUI:
+Seven standalone test suites validate functionality without launching the GUI:
 
 1. **`tests/test_crypto.exe`**:
    - Tests `BCryptGenRandom`, PBKDF2 key derivation from email salt, AES-256-GCM encryption/decryption, physical shredding, and AEAD tag authentication failure upon incorrect email.
 2. **`tests/test_renamer.exe`**:
-   - Tests Find & Replace, prefix/suffix insertion, tag patterns (`<name>`, `<inc:01>`), case transformations, collision detection, and undo history.
+   - Tests Find & Replace, prefix/suffix insertion, tag patterns (`<name>`, `<inc:01>`), case transformations, collision detection, undo history, and folder-scan type/size filters.
 3. **`tests/test_service.exe`**:
    - Tests single-file and folder auto-decryption, 30-minute inactivity tracking, persistent tracker serialization, full exit auto-encryption, and Explorer shell registry registration.
 4. **`tests/test_duplicate.exe`**:
-   - Tests 2-tier duplicate file scanning, SHA-256 binary hash clustering, unique file discrimination, recursive directory traversal, and automated copy selection.
+   - Tests 2-tier duplicate file scanning, SHA-256 binary hash clustering, unique file discrimination, recursive directory traversal, automated copy selection, and filtered scans.
 5. **`tests/test_i18n.exe`**:
-   - Validates 100% translation key coverage across all 160 `StringId` keys for both English and Bahasa Indonesia.
+   - Validates translation coverage across every `StringId` key for English and Bahasa Indonesia.
+6. **`tests/test_scanner_filter.exe`**:
+   - Tests extension-category matching, inclusive file-size limits, and `0` as unlimited.
+7. **`tests/test_model_tester.exe`**:
+   - Tests catalog loading, locally measured probe ratios, latest latency, price sorting, and maximum-price matching using a temporary SQLite database.
+8. **`tests/test_vscode_model_config.exe`**:
+   - Tests model insertion and duplicate detection against a temporary VS Code JSON file, including preservation of existing providers and creation of a backup.

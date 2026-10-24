@@ -1,6 +1,17 @@
 #include "renamer.h"
 #include <assert.h>
 #include <stdio.h>
+#include <windows.h>
+
+static void create_test_file(const wchar_t *path, DWORD size) {
+    HANDLE file = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    assert(file != INVALID_HANDLE_VALUE);
+    char data[8] = "test";
+    DWORD written = 0;
+    assert(WriteFile(file, data, size, &written, NULL));
+    assert(written == size);
+    CloseHandle(file);
+}
 
 int wmain(void) {
     wprintf(L"=====================================================\n");
@@ -69,6 +80,27 @@ int wmain(void) {
     assert(list->items[1].has_collision == true);
     assert(list->items[2].has_collision == true);
     wprintf(L"[PASS] Collision detection successfully flagged duplicate prospective names.\n");
+
+    wchar_t temp_path[MAX_PATH];
+    wchar_t temp_dir[MAX_PATH];
+    assert(GetTempPathW(MAX_PATH, temp_path) > 0);
+    assert(GetTempFileNameW(temp_path, L"wfm", 0, temp_dir) != 0);
+    assert(DeleteFileW(temp_dir));
+    assert(CreateDirectoryW(temp_dir, NULL));
+    wchar_t document_path[MAX_PATH];
+    wchar_t image_path[MAX_PATH];
+    swprintf(document_path, MAX_PATH, L"%ls\\document.txt", temp_dir);
+    swprintf(image_path, MAX_PATH, L"%ls\\image.jpg", temp_dir);
+    create_test_file(document_path, 4);
+    create_test_file(image_path, 5);
+    assert(renamer_scan_folder_filtered(list, temp_dir, false, SCANNER_FILE_TYPE_DOCUMENTS, 4));
+    assert(list->count == 1);
+    assert(wcscmp(list->items[0].orig_name, L"document.txt") == 0);
+    assert(list->items[0].file_size == 4);
+    DeleteFileW(document_path);
+    DeleteFileW(image_path);
+    RemoveDirectoryW(temp_dir);
+    wprintf(L"[PASS] Folder scan respects file-type and maximum-size filters.\n");
 
     renamer_free_list(list);
     wprintf(L"\n>>> ALL RENAMER TESTS PASSED PERFECTLY! <<<\n");

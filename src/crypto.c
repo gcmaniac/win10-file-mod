@@ -478,3 +478,128 @@ bool crypto_decrypt_file(
 
     return success;
 }
+
+bool crypto_decrypt_file_to_memory(
+    const wchar_t *src_path,
+    const uint8_t *key,
+    uint8_t *out_buf,
+    size_t out_capacity,
+    size_t *out_len
+) {
+    if (out_len) *out_len = 0;
+    if (!src_path || !key || !out_buf || out_capacity == 0 || !out_len) return false;
+    if (!crypto_init()) return false;
+
+    HANDLE hSrc = CreateFileW(src_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+    if (hSrc == INVALID_HANDLE_VALUE) return false;
+
+    FileHeader header;
+    DWORD bytesRead = 0;
+    bool success = false;
+    BCRYPT_KEY_HANDLE hKey = NULL;
+    uint8_t *cipher_buf = NULL;
+
+    if (!ReadFile(hSrc, &header, sizeof(header), &bytesRead, NULL) ||
+        bytesRead != sizeof(header) ||
+        memcmp(header.magic, HEADER_MAGIC, sizeof(header.magic)) != 0 ||
+        header.version != HEADER_VERSION ||
+        header.cipher_id != CIPHER_AES_256_GCM) {
+        goto cleanup;
+    }
+
+    LARGE_INTEGER file_size;
+    if (!GetFileSizeEx(hSrc, &file_size) ||
+        file_size.QuadPart < (LONGLONG)(sizeof(header) + sizeof(ChunkHeader))) {
+        goto cleanup;
+    }
+
+    NTSTATUS status = BCryptGenerateSymmetricKey(
+        g_hAesAlg, &hKey, NULL, 0, (PUCHAR)key, KEY_SIZE_AES256, 0
+    );
+    if (!BCRYPT_SUCCESS(status)) goto cleanup;
+
+    cipher_buf = (uint8_t *)malloc(CHUNK_SIZE);
+    if (!cipher_buf) goto cleanup;
+
+    uint32_t chunk_idx = 0;
+    size_t total_len = 0;
+    bool found_last = false;
+
+    while (!found_last) {
+        ChunkHeader ch;
+        if (!ReadFile(hSrc, &ch, sizeof(ch), &bytesRead, NULL) ||
+            bytesRead != sizeof(ch) ||
+            ch.is_last > 1 ||
+            ch.payload_len > CHUNK_SIZE ||
+            (ch.payload_len == 0 && !ch.is_last) ||
+            ch.payload_len > out_capacity - total_len) {
+            goto cleanup;
+        }
+
+        if (ch.payload_len > 0) {
+            if (!ReadFile(hSrc, cipher_buf, ch.payload_len, &bytesRead, NULL) ||
+                bytesRead != ch.payload_len) {
+                goto cleanup;
+            }
+        }
+
+        uint8_t chunk_nonce[GCM_NONCE_SIZE];
+        build_chunk_nonce(header.iv, chunk_idx, chunk_nonce);
+
+        ChunkAad aad;
+        aad.chunk_index = chunk_idx;
+        aad.is_last = ch.is_last;
+
+        BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO authInfo;
+        BCRYPT_INIT_AUTH_MODE_INFO(authInfo);
+        authInfo.pbNonce = chunk_nonce;
+        authInfo.cbNonce = sizeof(chunk_nonce);
+        authInfo.pbAuthData = (PUCHAR)&aad;
+        authInfo.cbAuthData = sizeof(aad);
+        authInfo.pbTag = ch.tag;
+        authInfo.cbTag = sizeof(ch.tag);
+
+        ULONG cbResult = 0;
+        status = BCryptDecrypt(
+            hKey,
+            cipher_buf,
+            ch.payload_len,
+            &authInfo,
+            NULL,
+            0,
+            out_buf + total_len,
+            (ULONG)(out_capacity - total_len),
+            &cbResult,
+            0
+        );
+        if (!BCRYPT_SUCCESS(status) || cbResult != ch.payload_len) goto cleanup;
+
+        total_len += cbResult;
+        found_last = ch.is_last != 0;
+        if (chunk_idx == UINT32_MAX && !found_last) goto cleanup;
+        chunk_idx++;
+    }
+
+    {
+        uint8_t extra;
+        if (!ReadFile(hSrc, &extra, sizeof(extra), &bytesRead, NULL) || bytesRead != 0) {
+            goto cleanup;
+        }
+    }
+
+    *out_len = total_len;
+    success = true;
+
+cleanup:
+    if (cipher_buf) {
+        SecureZeroMemory(cipher_buf, CHUNK_SIZE);
+        free(cipher_buf);
+    }
+    if (hKey) BCryptDestroyKey(hKey);
+    CloseHandle(hSrc);
+    if (!success) {
+        SecureZeroMemory(out_buf, out_capacity);
+        *out_len = 0;
+    }
+    return success;
+}

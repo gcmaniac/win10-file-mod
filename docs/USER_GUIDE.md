@@ -15,6 +15,7 @@ Welcome to the **Win10 File Encryptor & Bulk Renamer** User Guide. This comprehe
 4. [Encrypt Explorer Interface](#4-encrypt-explorer-interface)
    - [Directory Tree & File Browsing](#directory-tree--file-browsing)
    - [Column Sorting (Name, Type, Size, Date, Status)](#column-sorting)
+   - [File Type & Size Filters](#file-type--size-filters)
    - [Encrypting Selected Files & Folders](#encrypting-selected-files--folders)
    - [Decrypting & Opening Protected Files](#decrypting--opening-protected-files)
 5. [Inactivity Auto-Lock, Single Instance & Clean Exit](#5-inactivity-auto-lock-single-instance--clean-exit)
@@ -39,8 +40,9 @@ Welcome to the **Win10 File Encryptor & Bulk Renamer** User Guide. This comprehe
    - [Auto-Select Duplicate Copies](#auto-select-duplicate-copies)
    - [Safe Recycling via Windows Recycle Bin](#safe-recycling-via-windows-recycle-bin)
    - [Right-Click Context Menu](#right-click-context-menu)
-9. [Multi-Language Switching](#9-multi-language-switching)
-10. [Frequently Asked Questions (FAQ)](#10-frequently-asked-questions-faq)
+9. [KiosAPI Model Tester](#9-kiosapi-model-tester)
+10. [Multi-Language Switching](#10-multi-language-switching)
+11. [Frequently Asked Questions (FAQ)](#11-frequently-asked-questions-faq)
 
 ---
 
@@ -106,6 +108,14 @@ Click any column header to sort items immediately:
 - **Encryption Status (`Status Enkripsi`)**: Groups encrypted, decrypted, and original files.
 - **Visual Sort Arrow**: A native triangle indicator (▲ for Ascending, ▼ for Descending) appears on the active sort column.
 - **Folders at Top**: Folders always stay grouped at the top of the list, identical to standard Windows Explorer behavior.
+
+### File Type & Size Filters
+Before encrypting, configure the filter row directly below the folder path:
+- **File type**: choose all files, documents, images, or videos. Documents include `.pdf`, `.doc`, `.docx`, `.odt`, `.rtf`, `.txt`, `.xls`, `.xlsx`, `.ods`, `.ppt`, `.pptx`, `.odp`, and `.csv`.
+- **Image extensions**: `.jpg`, `.jpeg`, `.png`, `.gif`, `.bmp`, `.tif`, `.tiff`, `.webp`, `.svg`, `.ico`, `.heic`, and `.heif`.
+- **Video extensions**: `.mp4`, `.mov`, `.avi`, `.mkv`, `.wmv`, `.flv`, `.webm`, `.m4v`, `.mpeg`, `.mpg`, `.3gp`, and `.ts`.
+- **Maximum size (MB)**: files larger than the entered limit are skipped. `0` means unlimited. The limit uses MiB (1 MB = 1,048,576 bytes).
+- Files excluded by either filter remain as plaintext and are not shredded. Filters apply to selected-file and folder encryption; decryption is unchanged.
 
 ### Encrypting Selected Files & Folders
 1. In the file list pane, select one or multiple files:
@@ -189,6 +199,11 @@ The application features seamless Windows Explorer shell integration and a dedic
 
 Click the **🏷️ Bulk File Renamer** tab in the main header to access the batch renaming tool:
 
+### File Type & Size Filters
+- Choose all files, documents, images, or videos before the folder scan; the extension label shows the extensions included in the selected category.
+- **Maximum size (MB)** skips larger files. Enter `0` for no limit; the limit uses MiB (1 MB = 1,048,576 bytes).
+- Changing the type or maximum-size filter refreshes the file list, so only matching files are previewed and renamed.
+
 ### Method 1: Find & Replace
 - **Find**: Text to search for (case-insensitive).
 - **Replace With**: New replacement text.
@@ -230,7 +245,8 @@ Click the **🔍 Duplicate File Finder** tab in the top navigation bar to scan, 
 ### Selecting Folders & Recursive Subfolders
 1. Click the **Browse...** (`Pilih Folder...`) button to select the target directory you wish to inspect.
 2. Check **Scan Subfolders** (`Pindai Sub-folder`) to include all child directories recursively, or uncheck it to scan only the top-level directory.
-3. Click **Scan Duplicates** (`Mulai Pindai`) to initiate the scanning process. You can abort the scan at any point by clicking **Stop** (`Hentikan`).
+3. Select all files, documents, images, or videos and set an optional maximum size in MB (`0` means unlimited). The extension label lists the file extensions included; files outside either filter are not considered for duplicate detection.
+4. Click **Scan Duplicates** (`Mulai Pindai`) to initiate the scanning process. You can abort the scan at any point by clicking **Stop** (`Hentikan`).
 
 ### Fast 2-Tier Engine (File Size & SHA-256 Hash)
 The scanner executes a high-performance two-tier identification pipeline:
@@ -268,7 +284,27 @@ Right-click any row in the duplicate list to access immediate actions:
 
 ---
 
-## 9. Multi-Language Switching
+## 9. KiosAPI Model Tester
+
+The **KiosAPI Model Tester** tab is available only after signing in with the Master Password.
+
+### Preparing and protecting the API key
+- Place `kiosapi-key.txt` beside the application. It should contain only the KiosAPI key.
+- After successful setup or login, the application encrypts the key as `kiosapi-key.wkey` using the Master Password, verifies the encrypted file, and then removes the plaintext file. The key is unlocked in memory only for the authenticated session.
+- Do not share the key or add either key file to Git. Keep the Master Password safe; it is required to unlock the encrypted key.
+
+### Testing and sorting models
+- `kiosapi-models.db` must be beside the application. The list displays model, provider, input/output price per 1 million tokens, last request latency, and last result.
+- Click **Test all models** to send one request to each model after accepting the confirmation dialog. Tests may consume quota and incur API charges; image models may generate one image. **Stop** stops after the current request finishes.
+- Select multiple model rows with standard `Ctrl`-click and `Shift`-click selection, then right-click and choose **Scan Selected** to test only those models. The app asks for confirmation before sending requests.
+- Enter maximum input and output prices per 1 million tokens to filter the list. Enter non-negative numbers with an optional decimal point; leave a field blank for no limit. A model without a catalog price is excluded when a maximum for that price is set. **Test all models** tests the currently visible (filtered) models; **Scan Selected** only tests selected visible models.
+- **Availability** is the success ratio of probes run by this application (passed/total attempts), not official provider uptime or an SLA. It is unavailable until the first test.
+- Click **Availability**, **Output / 1M**, or **Input / 1M** to sort. Prices come from the catalog database; latency is measured locally from the latest request.
+- To add one model to VS Code, select exactly one row, right-click, and choose **Add Model to VS Code**. After confirmation, the model is added to the existing **KiosAPI All** provider in `%APPDATA%\Code\User\chatLanguageModels.json`. Existing providers and models are retained, duplicate model IDs are skipped, and a timestamped backup is created beside the config file before it is updated. The app does not add a new provider if **KiosAPI All** is missing.
+
+---
+
+## 10. Multi-Language Switching
 
 The software features complete live runtime localization:
 - Open the **🌐 Language** (`🌐 Bahasa`) menu in the top menu bar.
@@ -279,7 +315,7 @@ The software features complete live runtime localization:
 
 ---
 
-## 10. Frequently Asked Questions (FAQ)
+## 11. Frequently Asked Questions (FAQ)
 
 #### Q: Why doesn't the application allow opening a second window when already running?
 **A**: To protect encryption integrity and prevent tracker database corruption (`win10_file_enc_tracker.dat`), the app enforces **Strict Single Instance** via a Windows Named Mutex (`Win10FileMod_App_SingleInstance_Mutex`). Launching the executable again safely restores the existing window to the foreground.

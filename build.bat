@@ -26,8 +26,8 @@ if %errorlevel% neq 0 (
 
 echo [BUILD] Compiling win10_file_enc.exe with GCC...
 gcc -O2 -Wall -Wextra -municode -mwindows -Iinclude ^
-    src\main.c src\crypto.c src\vault.c src\scanner.c src\shredder.c src\renamer.c src\duplicate.c src\i18n.c src\service.c src\ui.c src\resources.o ^
-    -lbcrypt -lcomctl32 -lshell32 -lole32 -loleaut32 -luuid -lshlwapi ^
+    src\main.c src\crypto.c src\vault.c src\scanner.c src\shredder.c src\renamer.c src\duplicate.c src\i18n.c src\service.c src\kiosapi_key.c src\model_tester.c src\vscode_model_config.c src\ui.c src\resources.o ^
+    -lbcrypt -lcomctl32 -lshell32 -lole32 -loleaut32 -luuid -lshlwapi -lwinhttp -lsqlite3 ^
     -o win10_file_enc.exe
 
 if %errorlevel% equ 0 (

@@ -91,6 +91,12 @@ Semua modul dikompilasi menjadi satu berkas biner mandiri yang sangat ringan tan
 - **Penghapusan Aman ke Windows Recycle Bin**: Berkas duplikat terpilih dipindahkan ke Recycle Bin menggunakan `SHFileOperationW` (`FOF_ALLOWUNDO`) sehingga dapat dipulihkan jika sewaktu-waktu dibutuhkan, lengkap dengan konfirmasi estimasi ruang penyimpanan yang dihemat.
 - **Menu Konteks Klik Kanan Lengkap**: Buka berkas, tampilkan dan sorot berkas di Windows Explorer, tandai/batalkan tanda, atau hapus berkas tertentu.
 
+### 10. 🧪 Penguji Model KiosAPI
+- **API key terlindungi Master Password**: `kiosapi-key.txt` dienkripsi menjadi `kiosapi-key.wkey` dan hanya dibuka di memori selama sesi login.
+- **Katalog dan probe model**: `kiosapi-models.db` menyediakan daftar model beserta harga input/output per 1 juta token. Probe dilakukan berurutan setelah konfirmasi dan dapat memakai kuota atau menimbulkan biaya.
+- **Filter harga maksimum**: Filter harga input dan output berlaku pada model yang terlihat; kolom kosong berarti tanpa batas. Model tanpa harga terkait tidak ditampilkan jika batasnya diisi. Uji semua maupun model terpilih hanya menguji daftar hasil filter.
+- **Tambahkan ke VS Code**: Pilih satu model, klik kanan, lalu pilih **Tambahkan Model ke VS Code**. Model ditambahkan ke provider **KiosAPI All** yang sudah ada; entri lain dipertahankan, duplikasi dilewati, dan cadangan bertimestamp dibuat sebelum konfigurasi diperbarui.
+
 ---
 
 ## 📁 Struktur Direktori Proyek
@@ -112,6 +118,9 @@ win10-file-mod/
 ├── include/                        # Header C publik
 │   ├── common.h                    # Konstanta umum & struktur terbagi
 │   ├── crypto.h                    # API Windows CNG AES-256-GCM & PBKDF2
+│   ├── kiosapi_key.h               # Penyimpanan API key KiosAPI terenkripsi
+│   ├── model_tester.h              # API katalog dan probe model KiosAPI
+│   ├── vscode_model_config.h       # API integrasi konfigurasi model VS Code
 │   ├── duplicate.h                 # API pencari berkas duplikat SHA-256 & Recycle Bin
 │   ├── i18n.h                      # Tabel string multi-bahasa & API kendali
 │   ├── renamer.h                   # Struktur renamer, deteksi tabrakan & undo
@@ -123,6 +132,9 @@ win10-file-mod/
 │
 ├── src/                            # Berkas sumber kode C
 │   ├── crypto.c                    # Enkripsi/dekripsi CNG BCrypt & CSPRNG
+│   ├── kiosapi_key.c               # Penyimpanan API key dengan Master Password
+│   ├── model_tester.c              # Loader katalog SQLite dan probe WinHTTP
+│   ├── vscode_model_config.c       # Pembaruan JSON VS Code dan cadangan
 │   ├── duplicate.c                 # Mesin pencari duplikat 2-tier (ukuran + SHA-256)
 │   ├── i18n.c                      # Tabel pencarian string terjemahan
 │   ├── main.c                      # Titik masuk WinMain & parser CLI
@@ -138,8 +150,11 @@ win10-file-mod/
 │   ├── test_crypto.c               # 9 rangkaian uji CNG AES-GCM, salt, dan shredder
 │   ├── test_duplicate.c            # Pengujian pengelompokan duplikat SHA-256 & auto-select
 │   ├── test_i18n.c                 # Verifikasi cakupan 100% kunci String ID
+│   ├── test_model_tester.c         # Katalog, hasil probe, sortir dan filter harga
 │   ├── test_renamer.c              # Pengujian metode renamer & deteksi tabrakan
-│   └── test_service.c              # Pengujian auto-dekripsi, tracker & rekonsiliasi
+│   ├── test_scanner_filter.c       # Filter ekstensi dan ukuran berkas
+│   ├── test_service.c              # Pengujian auto-dekripsi, tracker & rekonsiliasi
+│   └── test_vscode_model_config.c  # Integrasi konfigurasi VS Code dan deteksi duplikasi
 │
 ├── build.bat                       # Skrip kompilasi MinGW-w64 GCC (1-klik kompilasi)
 ├── Makefile                        # Skrip kompilasi GNU Make
@@ -180,7 +195,7 @@ gcc -O2 -Wall -Wextra -municode -mwindows -Iinclude ^
 
 ## 🧪 Pengujian Otomatis (Automated Testing)
 
-Tersedia lima rangkaian pengujian mandiri untuk memvalidasi seluruh fungsionalitas tanpa membuka UI grafis:
+Tersedia delapan rangkaian pengujian mandiri untuk memvalidasi fungsionalitas tanpa membuka UI grafis:
 
 ```cmd
 # 1. Pengujian Kriptografi & Shredder (9 pengujian)
@@ -188,20 +203,32 @@ gcc -O2 -Iinclude tests\test_crypto.c src\crypto.c src\shredder.c -lbcrypt -o te
 tests\test_crypto.exe
 
 # 2. Pengujian Mesin Renamer & Deteksi Tabrakan
-gcc -O2 -Iinclude tests\test_renamer.c src\renamer.c -o tests\test_renamer.exe
+gcc -O2 -Iinclude tests\test_renamer.c src\renamer.c src\scanner.c -o tests\test_renamer.exe
 tests\test_renamer.exe
 
 # 3. Pengujian Layanan Latar Belakang & Pelacak Inaktivitas
-gcc -O2 -Iinclude tests\test_service.c src\service.c src\crypto.c src\vault.c src\shredder.c -lbcrypt -lshlwapi -lole32 -loleaut32 -luuid -o tests\test_service.exe
+gcc -O2 -Iinclude tests\test_service.c src\service.c src\crypto.c src\vault.c src\shredder.c src\scanner.c src\i18n.c -lbcrypt -lshlwapi -lole32 -loleaut32 -luuid -o tests\test_service.exe
 tests\test_service.exe
 
 # 4. Pengujian Cakupan Multi-Bahasa (i18n)
-gcc -O2 -Iinclude tests\test_i18n.c src\i18n.c -o tests\test_i18n.exe
+gcc -O2 -municode -Iinclude tests\test_i18n.c src\i18n.c -o tests\test_i18n.exe
 tests\test_i18n.exe
 
 # 5. Pengujian Mesin Pencari Berkas Duplikat (SHA-256 & Auto-Select)
-gcc -O2 -Iinclude tests\test_duplicate.c src\duplicate.c -lbcrypt -lshell32 -o tests\test_duplicate.exe
+gcc -O2 -Iinclude tests\test_duplicate.c src\duplicate.c src\scanner.c -lbcrypt -lshell32 -o tests\test_duplicate.exe
 tests\test_duplicate.exe
+
+# 6. Filter ekstensi dan ukuran berkas
+gcc -O2 -municode -Iinclude tests\test_scanner_filter.c src\scanner.c -o tests\test_scanner_filter.exe
+tests\test_scanner_filter.exe
+
+# 7. Katalog, sorting, dan filter harga model (tanpa request API)
+gcc -O2 -Wall -Wextra -municode -Iinclude tests\test_model_tester.c src\model_tester.c -lwinhttp -lsqlite3 -o tests\test_model_tester.exe
+tests\test_model_tester.exe
+
+# 8. Integrasi konfigurasi model VS Code
+gcc -O2 -Wall -Wextra -municode -Iinclude tests\test_vscode_model_config.c src\vscode_model_config.c -lsqlite3 -o tests\test_vscode_model_config.exe
+tests\test_vscode_model_config.exe
 ```
 
 ---

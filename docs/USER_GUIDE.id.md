@@ -15,6 +15,7 @@ Selamat datang di Panduan Pengguna **Win10 File Encryptor & Bulk Renamer**. Buku
 4. [Antarmuka Encrypt Explorer](#4-antarmuka-encrypt-explorer)
    - [Pohon Direktori & Penjelajahan Berkas](#pohon-direktori--penjelajahan-berkas)
    - [Sortir Kolom (Nama, Tipe, Ukuran, Tanggal, Status)](#sortir-kolom)
+   - [Filter Tipe Berkas & Batas Ukuran](#filter-tipe-berkas--batas-ukuran)
    - [Enkripsi Berkas & Folder Terpilih](#enkripsi-berkas--folder-terpilih)
    - [Dekripsi & Membuka Berkas Terproteksi](#dekripsi--membuka-berkas-terproteksi)
 5. [Auto-Lock 30 Menit, Proteksi Instansi Tunggal & Penutupan](#5-auto-lock-30-menit-proteksi-instansi-tunggal--penutupan)
@@ -39,8 +40,9 @@ Selamat datang di Panduan Pengguna **Win10 File Encryptor & Bulk Renamer**. Buku
    - [Pilih Otomatis Salinan (Auto-Select Copies)](#pilih-otomatis-salinan-auto-select-copies)
    - [Penghapusan Aman ke Windows Recycle Bin](#penghapusan-aman-ke-windows-recycle-bin)
    - [Menu Konteks Klik Kanan](#menu-konteks-klik-kanan)
-9. [Penggantian Bahasa Antarmuka (i18n)](#9-penggantian-bahasa-antarmuka-i18n)
-10. [Pertanyaan yang Sering Diajukan (FAQ)](#10-pertanyaan-yang-sering-diajukan-faq)
+9. [Penguji Model KiosAPI](#9-penguji-model-kiosapi)
+10. [Penggantian Bahasa Antarmuka (i18n)](#10-penggantian-bahasa-antarmuka-i18n)
+11. [Pertanyaan yang Sering Diajukan (FAQ)](#11-pertanyaan-yang-sering-diajukan-faq)
 
 ---
 
@@ -106,6 +108,14 @@ Klik pada header kolom mana saja untuk mengurutkan daftar secara instan:
 - **Status Enkripsi**: Mengelompokkan status berkas terenkripsi, didekripsi, dan berkas asli.
 - **Indikator Panah Segitiga**: Menampilkan panah native Windows (▲ Ascending, ▼ Descending) pada kolom aktif.
 - **Folder Selalu di Atas**: Mengikuti standar Windows Explorer asli, folder selalu dikelompokkan di bagian atas berkas.
+
+### Filter Tipe Berkas & Batas Ukuran
+Sebelum mengenkripsi, atur filter di baris tepat di bawah folder:
+- **Tipe file**: pilih semua file, dokumen, gambar, atau video. Filter dokumen mencakup `.pdf`, `.doc`, `.docx`, `.odt`, `.rtf`, `.txt`, `.xls`, `.xlsx`, `.ods`, `.ppt`, `.pptx`, `.odp`, dan `.csv`.
+- **Ekstensi gambar**: `.jpg`, `.jpeg`, `.png`, `.gif`, `.bmp`, `.tif`, `.tiff`, `.webp`, `.svg`, `.ico`, `.heic`, dan `.heif`.
+- **Ekstensi video**: `.mp4`, `.mov`, `.avi`, `.mkv`, `.wmv`, `.flv`, `.webm`, `.m4v`, `.mpeg`, `.mpg`, `.3gp`, dan `.ts`.
+- **Ukuran maks. (MB)**: file yang lebih besar dari batas akan dilewati. Nilai `0` berarti tanpa batas. Batas dihitung dalam MiB (1 MB = 1.048.576 byte).
+- File yang tidak cocok dengan tipe atau ukuran tetap sebagai plaintext dan tidak ikut dimusnahkan. Filter ini berlaku untuk enkripsi file terpilih maupun pemindaian folder; dekripsi tidak terpengaruh.
 
 ### Enkripsi Berkas & Folder Terpilih
 1. Pilih satu atau beberapa berkas di panel daftar:
@@ -189,6 +199,11 @@ Aplikasi menyediakan background service daemon dan integrasi shell Windows Explo
 
 Klik tab **🏷️ Bulk File Renamer** pada bilah navigasi atas untuk mengubah nama banyak berkas sekaligus:
 
+### Filter Tipe Berkas & Batas Ukuran
+- Pilih semua berkas, dokumen, gambar, atau video sebelum pemindaian folder; label ekstensi menampilkan ekstensi yang termasuk kategori.
+- **Ukuran maks. (MB)** melewati berkas yang lebih besar. Masukkan `0` untuk tanpa batas; nilai batas menggunakan MiB (1 MB = 1.048.576 byte).
+- Perubahan tipe atau batas ukuran akan memindai ulang daftar, sehingga hanya berkas yang cocok yang ditampilkan dan dapat diubah namanya.
+
 ### Metode 1: Ganti Teks (Find & Replace)
 - **Cari (Find)**: Kata/frasa yang ingin dicari (case-insensitive).
 - **Ganti Dengan**: Teks baru penggantinya.
@@ -230,7 +245,8 @@ Klik tab **🔍 Pencari Berkas Duplikat** pada bilah navigasi atas untuk meminda
 ### Memilih Folder & Opsi Rekursif Sub-folder
 1. Klik tombol **Pilih Folder...** (`Browse...`) untuk memilih direktori yang ingin Anda periksa.
 2. Centang **Pindai Sub-folder** (`Scan Subfolders`) jika Anda ingin memindai seluruh direktori anak secara rekursif, atau hilangkan centang jika hanya ingin memindai folder tingkat atas.
-3. Klik tombol **Mulai Pindai** (`Scan Duplicates`). Anda dapat membatalkan pemindaian sewaktu-waktu dengan menekan tombol **Hentikan** (`Stop`).
+3. Pilih semua berkas, dokumen, gambar, atau video, lalu tentukan ukuran maksimum opsional dalam MB (`0` berarti tanpa batas). Label ekstensi menunjukkan ekstensi yang disertakan; berkas di luar filter tidak digunakan untuk pencarian duplikat.
+4. Klik tombol **Mulai Pindai** (`Scan Duplicates`). Anda dapat membatalkan pemindaian sewaktu-waktu dengan menekan tombol **Hentikan** (`Stop`).
 
 ### Algoritma 2-Fase Cepat (Ukuran & Hash SHA-256)
 Aplikasi menggunakan algoritma dua tahap berkinerja tinggi:
@@ -268,7 +284,27 @@ Klik kanan pada baris berkas di tabel duplikat untuk memanggil fungsi cepat:
 
 ---
 
-## 9. Penggantian Bahasa Antarmuka (i18n)
+## 9. Penguji Model KiosAPI
+
+Tab **Uji Model KiosAPI** hanya tersedia setelah Anda masuk dengan Master Password.
+
+### Menyiapkan dan melindungi API key
+- Letakkan `kiosapi-key.txt` di folder yang sama dengan aplikasi. Isinya harus berupa API key KiosAPI tanpa teks tambahan.
+- Saat setup atau login berhasil, aplikasi mengenkripsi key menjadi `kiosapi-key.wkey` dengan Master Password, memverifikasi hasilnya, lalu menghapus file plaintext. Key hanya dibuka di memori untuk sesi terautentikasi.
+- Jangan membagikan atau memasukkan file key ke Git. Simpan Master Password dengan aman; key terenkripsi hanya dapat dibuka dengan password tersebut.
+
+### Menguji dan mengurutkan model
+- Database `kiosapi-models.db` harus berada di samping aplikasi. Daftar menampilkan model, provider, harga input/output per 1 juta token, latensi request terakhir, dan hasil terakhir.
+- Klik **Uji semua model** untuk mengirim satu request ke setiap model setelah menyetujui dialog konfirmasi. Pengujian dapat menggunakan kuota dan menimbulkan biaya pada akun API Anda; model gambar dapat menghasilkan satu gambar. **Stop** menghentikan pengujian setelah request yang sedang berjalan selesai.
+- Pilih beberapa baris model dengan `Ctrl`-klik dan `Shift`-klik seperti biasa, lalu klik kanan dan pilih **Pindai yang Dipilih** untuk menguji model tersebut saja. Aplikasi meminta konfirmasi sebelum mengirim request.
+- Isi batas maksimum harga input dan output per 1 juta token untuk memfilter daftar. Masukkan angka non-negatif dengan titik desimal opsional; kosongkan kolom agar tanpa batas. Model tanpa harga katalog tidak ditampilkan jika batas untuk jenis harga tersebut diisi. **Uji semua model** hanya menguji model yang sedang terlihat setelah filter; **Pindai yang Dipilih** hanya menguji model terlihat yang dipilih.
+- Kolom **Ketersediaan** adalah rasio keberhasilan probe yang dijalankan dari aplikasi ini (berhasil/total percobaan), bukan uptime resmi atau SLA provider. Nilai awalnya belum tersedia sampai pengujian pertama.
+- Klik header **Ketersediaan**, **Output / 1M**, atau **Input / 1M** untuk mengurutkan. Harga berasal dari katalog database; latensi berasal dari pengukuran lokal request terakhir.
+- Untuk menambahkan model ke VS Code, pilih tepat satu baris, klik kanan, lalu pilih **Tambahkan Model ke VS Code**. Setelah dikonfirmasi, model ditambahkan ke provider **KiosAPI All** yang sudah ada di `%APPDATA%\Code\User\chatLanguageModels.json`. Provider dan model lain dipertahankan, ID duplikat dilewati, dan cadangan bertimestamp dibuat di samping file konfigurasi sebelum diperbarui. Aplikasi tidak membuat provider baru jika **KiosAPI All** tidak ditemukan.
+
+---
+
+## 10. Penggantian Bahasa Antarmuka (i18n)
 
 Aplikasi mendukung lokalisasi dinamis secara langsung:
 - Buka menu **🌐 Bahasa** (`🌐 Language`) di menu bar.
@@ -279,7 +315,7 @@ Aplikasi mendukung lokalisasi dinamis secara langsung:
 
 ---
 
-## 10. Pertanyaan yang Sering Diajukan (FAQ)
+## 11. Pertanyaan yang Sering Diajukan (FAQ)
 
 #### T: Mengapa aplikasi tidak mengizinkan membuka jendela baru jika aplikasi sudah berjalan?
 **J**: Sesuai arsitektur proteksi instansi tunggal (*Strict Single Instance*), aplikasi memanfaatkan Windows Mutex untuk mencegah duplikasi proses di memori dan menghindari tabrakan berkas pelacak enkripsi (`win10_file_enc_tracker.dat`). Jika Anda membuka kembali program, jendela yang sudah ada akan otomatis dipulihkan ke baris terdepan layar Anda.

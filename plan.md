@@ -2,7 +2,7 @@
 **Repository:** `e:\c_projects\win10-file-mod`  
 **Platform:** Windows 10 / 11 (64-bit Native PE)  
 **Language & Toolchain:** Pure C (C99), MinGW-w64 GCC (MSYS2), GNU `windres`  
-**Dependencies:** Zero external third-party DLLs (100% Native Windows CNG `bcrypt.dll`, `shell32.dll`, `comctl32.dll`, `user32.dll`)
+**Dependencies:** Native Windows APIs plus SQLite for the bundled model catalog (WinHTTP, CNG, shell, and common controls)
 
 ---
 
@@ -136,3 +136,13 @@ Jendela utama berukuran 580 x 520 px dengan kontrol:
 4. **Langkah 4**: Implementasi GUI Native Win32 (`include/ui.h`, `src/ui.c`, `src/main.c`) dengan worker thread agar UI responsif.
 5. **Langkah 5**: Pembuatan `build.bat` dan kompilasi menggunakan GCC MinGW-w64.
 6. **Langkah 6**: Pengujian menyeluruh (uji enkripsi berkas, verifikasi integritas, penghapusan aman, dan uji dekripsi).
+
+---
+
+## 7. Fitur Encrypt Explorer dan KiosAPI yang Diimplementasikan
+
+- Encrypt Explorer menyediakan filter tipe `Semua`, `Dokumen`, `Gambar`, dan `Video`, berikut ekstensi yang didukung. Filter berlaku pada enkripsi berkas terpilih maupun hasil pemindaian folder.
+- Batas ukuran maksimum dimasukkan dalam MB (MiB); nilai `0` berarti tanpa batas. Berkas yang tidak cocok dikecualikan sebelum worker mengenkripsi dan menghapus plaintext.
+- Katalog `kiosapi-models.db` menyimpan model dan harga. Penguji model menggunakan WinHTTP untuk probe HTTPS berurutan dan menyimpan hasil pada tabel `model_test_results`.
+- API key KiosAPI pertama kali diubah dari `kiosapi-key.txt` menjadi `kiosapi-key.wkey` dengan Master Password setelah login/setup berhasil; plaintext dihapus setelah ciphertext diverifikasi. Key tidak ditulis ke log dan hanya dibuka di memori sesi.
+- Ketersediaan pada tabel tester adalah rasio sukses probe lokal, bukan nilai uptime/SLA provider. Pengujian dapat memakai kuota dan menimbulkan biaya.

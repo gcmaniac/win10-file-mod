@@ -48,6 +48,15 @@ bool crypto_decrypt_file(
     volatile bool *cancel_flag
 );
 
+/* Decrypt a WENC file into caller-owned memory without writing plaintext to disk */
+bool crypto_decrypt_file_to_memory(
+    const wchar_t *src_path,
+    const uint8_t *key,
+    uint8_t *out_buf,
+    size_t out_capacity,
+    size_t *out_len
+);
+
 #ifdef __cplusplus
 }
 #endif

@@ -7,8 +7,14 @@
 #include "i18n.h"
 #include "service.h"
 #include "duplicate.h"
+#include "kiosapi_key.h"
+#include "model_tester.h"
+#include "vscode_model_config.h"
 #include <shlobj.h>
 #include <shellapi.h>
+#include <sqlite3.h>
+#include <errno.h>
+#include <math.h>
 
 /* Menu IDs */
 #define IDM_FILE_OPEN           2001
@@ -16,6 +22,7 @@
 #define IDM_VIEW_ENCRYPT        2003
 #define IDM_VIEW_RENAME         2004
 #define IDM_VIEW_DUPLICATES     2007
+#define IDM_VIEW_MODEL_TESTER   2008
 #define IDM_HELP_GUIDE          2005
 #define IDM_HELP_ABOUT          2006
 #define IDM_LANG_EN             2010
@@ -76,6 +83,12 @@
 #define IDC_ENC_BTN_RUN         1006
 #define IDC_ENC_TREE            1010
 #define IDC_ENC_EXPLORER_LIST   1011
+#define IDC_ENC_FILE_TYPE       1012
+#define IDC_ENC_TYPE_LABEL      1013
+#define IDC_ENC_EXTENSIONS      1014
+#define IDC_ENC_MAX_SIZE_LABEL  1015
+#define IDC_ENC_MAX_SIZE        1016
+#define IDC_ENC_MAX_SIZE_UNIT   1017
 #define IDC_PROGRESS            1032
 #define IDC_STATIC_STATUS       1033
 #define IDC_LOG_BOX             1034
@@ -108,6 +121,12 @@
 #define IDC_REN_BTN_UNDO        3124
 #define IDC_REN_BTN_PREVIEW     3125
 #define IDC_REN_STATIC_STATUS   3126
+#define IDC_REN_FILE_TYPE_LABEL 3127
+#define IDC_REN_FILE_TYPE       3128
+#define IDC_REN_EXTENSIONS      3129
+#define IDC_REN_MAX_SIZE_LABEL  3130
+#define IDC_REN_MAX_SIZE        3131
+#define IDC_REN_MAX_SIZE_UNIT   3132
 
 /* Page 3 (Duplicate File Finder) IDs */
 #define IDC_DUP_GRP_FOLDER      3201
@@ -123,6 +142,27 @@
 #define IDC_DUP_LISTVIEW        3211
 #define IDC_DUP_PROGRESS        3212
 #define IDC_DUP_STATIC_STATUS   3213
+#define IDC_DUP_FILE_TYPE_LABEL 3214
+#define IDC_DUP_FILE_TYPE       3215
+#define IDC_DUP_EXTENSIONS      3216
+#define IDC_DUP_MAX_SIZE_LABEL  3217
+#define IDC_DUP_MAX_SIZE        3218
+#define IDC_DUP_MAX_SIZE_UNIT   3219
+
+/* Page 4 (Password-protected KiosAPI Model Tester) IDs */
+#define IDC_MODEL_LOCK_INFO     3301
+#define IDC_MODEL_LOCK_LOGIN    3302
+#define IDC_MODEL_BTN_TEST      3303
+#define IDC_MODEL_BTN_STOP      3304
+#define IDC_MODEL_PROGRESS      3305
+#define IDC_MODEL_STATUS        3306
+#define IDC_MODEL_LIST          3307
+#define IDM_MODEL_SCAN_SELECTED 3308
+#define IDC_MODEL_MAX_INPUT_LABEL 3309
+#define IDC_MODEL_MAX_INPUT      3310
+#define IDC_MODEL_MAX_OUTPUT_LABEL 3311
+#define IDC_MODEL_MAX_OUTPUT     3312
+#define IDM_MODEL_ADD_TO_VSCODE  3313
 
 /* Custom Thread Messages */
 #define WM_APP_LOG_MSG          (WM_APP + 1)
@@ -131,6 +171,8 @@
 #define WM_APP_REN_FINISHED     (WM_APP + 5)
 #define WM_APP_DUP_PROGRESS     (WM_APP + 10)
 #define WM_APP_DUP_FINISHED     (WM_APP + 11)
+#define WM_APP_MODEL_PROGRESS   (WM_APP + 12)
+#define WM_APP_MODEL_FINISHED   (WM_APP + 13)
 
 /* Global Window Handles */
 static HWND g_hWndMain = NULL;
@@ -141,6 +183,10 @@ static HFONT g_hFontTitle = NULL;
 
 /* Authentication & State */
 static bool g_bAuthenticated = false;
+static char g_kiosapiKey[KIOSAPI_KEY_CAPACITY] = {0};
+static size_t g_kiosapiKeyLen = 0;
+static bool g_bKiosapiKeyReady = false;
+static wchar_t g_kiosapiKeyError[256] = {0};
 
 /* Setup Controls */
 static HWND g_hSetupCtrls[16] = {0};
@@ -196,6 +242,12 @@ static HWND g_hChkRecursive = NULL;
 static HWND g_hChkRemember1 = NULL;
 static HWND g_hEncTree = NULL;
 static HWND g_hEncExplorerList = NULL;
+static HWND g_hEncFileTypeLabel = NULL;
+static HWND g_hEncFileType = NULL;
+static HWND g_hEncFileExtensions = NULL;
+static HWND g_hEncMaxSizeLabel = NULL;
+static HWND g_hEncMaxSizeEdit = NULL;
+static HWND g_hEncMaxSizeUnit = NULL;
 static HWND g_hProgress = NULL;
 static HWND g_hStaticStatus = NULL;
 static HWND g_hLogBox = NULL;
@@ -229,6 +281,12 @@ static HWND g_hRenBtnStart = NULL;
 static HWND g_hRenBtnUndo = NULL;
 static HWND g_hRenBtnPreview = NULL;
 static HWND g_hRenStaticStatus = NULL;
+static HWND g_hRenFileTypeLabel = NULL;
+static HWND g_hRenFileType = NULL;
+static HWND g_hRenFileExtensions = NULL;
+static HWND g_hRenMaxSizeLabel = NULL;
+static HWND g_hRenMaxSizeEdit = NULL;
+static HWND g_hRenMaxSizeUnit = NULL;
 
 /* Worker Threads */
 static HANDLE g_hWorkerThread = NULL;
@@ -255,6 +313,69 @@ static HWND g_hDupBtnScan = NULL;
 static HWND g_hDupList = NULL;
 static HWND g_hDupProgress = NULL;
 static HWND g_hDupStaticStatus = NULL;
+static HWND g_hDupFileTypeLabel = NULL;
+static HWND g_hDupFileType = NULL;
+static HWND g_hDupFileExtensions = NULL;
+static HWND g_hDupMaxSizeLabel = NULL;
+static HWND g_hDupMaxSizeEdit = NULL;
+static HWND g_hDupMaxSizeUnit = NULL;
+
+/* Page 4 (KiosAPI Model Tester) Handles */
+static HWND g_hModelCtrls[10] = {0};
+static int g_nModelCtrls = 0;
+static HWND g_hModelLockCtrls[2] = {0};
+static int g_nModelLockCtrls = 0;
+static HWND g_hModelLockInfo = NULL;
+static HWND g_hModelLockLogin = NULL;
+static HWND g_hModelBtnTest = NULL;
+static HWND g_hModelBtnStop = NULL;
+static HWND g_hModelProgress = NULL;
+static HWND g_hModelStatus = NULL;
+static HWND g_hModelList = NULL;
+static HWND g_hModelMaxInputLabel = NULL;
+static HWND g_hModelMaxInput = NULL;
+static HWND g_hModelMaxOutputLabel = NULL;
+static HWND g_hModelMaxOutput = NULL;
+static ModelSortColumn g_modelSortColumn = MODEL_SORT_UPTIME;
+static bool g_modelSortDescending = true;
+static bool g_bModelDbReady = false;
+static ModelTestRow *g_modelRows = NULL;
+static size_t g_modelRowCount = 0;
+static size_t g_modelVisibleCount = 0;
+static HANDLE g_hModelThread = NULL;
+static volatile bool g_bModelCancel = false;
+static bool g_bModelTesting = false;
+
+typedef struct {
+    HWND hWnd;
+    wchar_t database_path[MAX_PATH * 2];
+    char api_key[KIOSAPI_KEY_CAPACITY];
+    const char **selected_model_names;
+    size_t selected_model_count;
+} ModelWorkerParams;
+
+typedef struct {
+    int completed;
+    int total;
+    bool succeeded;
+    wchar_t model_name[MODEL_TEST_NAME_CAPACITY];
+    wchar_t result[MODEL_TEST_RESULT_CAPACITY];
+} ModelProgressPayload;
+
+typedef struct {
+    bool success;
+    bool cancelled;
+    int completed;
+    int succeeded;
+    int failed;
+    wchar_t error[256];
+} ModelFinishedPayload;
+
+static bool get_app_database_path(wchar_t *out_path, size_t capacity);
+static void refresh_model_listview(void);
+static void update_model_ready_status(void);
+static void start_model_tests(HWND hWnd, bool selected_only);
+static void clear_kiosapi_key(void);
 static HWND g_hDupBtnAutoSel = NULL;
 static HWND g_hDupBtnSelAll = NULL;
 static HWND g_hDupBtnDeselAll = NULL;
@@ -276,12 +397,16 @@ typedef struct {
     HWND hWnd;
     wchar_t folder[MAX_PATH * 2];
     bool recursive;
+    ScannerFileType file_type_filter;
+    uint64_t max_file_size_bytes;
 } DupWorkerParams;
 
 typedef struct {
     JobConfig config;
     HWND hWnd;
     FileList *custom_files;
+    ScannerFileType file_type_filter;
+    uint64_t max_file_size_bytes;
 } WorkerParams;
 
 static void set_font(HWND hCtrl, HFONT hFont) {
@@ -295,6 +420,119 @@ static void register_ctrl(HWND *array, int *count, int max_cap, HWND hCtrl) {
         array[*count] = hCtrl;
         (*count)++;
     }
+}
+
+static void populate_file_type_combo(HWND combo) {
+    if (!combo) return;
+    SendMessageW(combo, CB_RESETCONTENT, 0, 0);
+    SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)i18n_get(STR_ENC_FILE_TYPE_ALL));
+    SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)i18n_get(STR_ENC_FILE_TYPE_DOCUMENTS));
+    SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)i18n_get(STR_ENC_FILE_TYPE_IMAGES));
+    SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)i18n_get(STR_ENC_FILE_TYPE_VIDEOS));
+    SendMessageW(combo, CB_SETCURSEL, 0, 0);
+}
+
+static void update_file_filter_extensions(HWND combo, HWND extensions_label) {
+    if (!combo || !extensions_label) return;
+    int selected = (int)SendMessageW(combo, CB_GETCURSEL, 0, 0);
+    StringId extension_string = STR_ENC_EXT_ALL;
+    if (selected == 1) extension_string = STR_ENC_EXT_DOCUMENTS;
+    else if (selected == 2) extension_string = STR_ENC_EXT_IMAGES;
+    else if (selected == 3) extension_string = STR_ENC_EXT_VIDEOS;
+    SetWindowTextW(extensions_label, i18n_get(extension_string));
+}
+
+static void refresh_file_filter_controls(HWND combo, HWND extensions_label, HWND max_label, HWND unit) {
+    if (combo) {
+        int selected = (int)SendMessageW(combo, CB_GETCURSEL, 0, 0);
+        populate_file_type_combo(combo);
+        SendMessageW(combo, CB_SETCURSEL, selected >= 0 && selected <= 3 ? selected : 0, 0);
+    }
+    update_file_filter_extensions(combo, extensions_label);
+    if (max_label) SetWindowTextW(max_label, i18n_get(STR_ENC_MAX_SIZE_LABEL));
+    if (unit) SetWindowTextW(unit, i18n_get(STR_ENC_MAX_SIZE_UNIT));
+}
+
+static void create_file_filter_controls(
+    HWND parent,
+    int label_id,
+    int combo_id,
+    int extensions_id,
+    int max_label_id,
+    int max_edit_id,
+    int unit_id,
+    HWND *label,
+    HWND *combo,
+    HWND *extensions,
+    HWND *max_label,
+    HWND *max_edit,
+    HWND *unit,
+    HWND *control_array,
+    int *control_count,
+    int control_capacity
+) {
+    *label = CreateWindowExW(0, L"STATIC", i18n_get(STR_ENC_FILE_TYPE_LABEL),
+        WS_CHILD, 0, 0, 65, 22, parent, (HMENU)(INT_PTR)label_id, NULL, NULL);
+    set_font(*label, g_hFontBold);
+    register_ctrl(control_array, control_count, control_capacity, *label);
+
+    *combo = CreateWindowExW(0, L"COMBOBOX", L"",
+        WS_CHILD | CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 0, 0, 140, 120,
+        parent, (HMENU)(INT_PTR)combo_id, NULL, NULL);
+    set_font(*combo, g_hFont);
+    populate_file_type_combo(*combo);
+    register_ctrl(control_array, control_count, control_capacity, *combo);
+
+    *extensions = CreateWindowExW(0, L"STATIC", i18n_get(STR_ENC_EXT_ALL),
+        WS_CHILD | SS_LEFT, 0, 0, 385, 22, parent, (HMENU)(INT_PTR)extensions_id, NULL, NULL);
+    set_font(*extensions, g_hFont);
+    register_ctrl(control_array, control_count, control_capacity, *extensions);
+
+    *max_label = CreateWindowExW(0, L"STATIC", i18n_get(STR_ENC_MAX_SIZE_LABEL),
+        WS_CHILD, 0, 0, 95, 22, parent, (HMENU)(INT_PTR)max_label_id, NULL, NULL);
+    set_font(*max_label, g_hFontBold);
+    register_ctrl(control_array, control_count, control_capacity, *max_label);
+
+    *max_edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"0",
+        WS_CHILD | ES_NUMBER | ES_AUTOHSCROLL | WS_TABSTOP, 0, 0, 55, 24,
+        parent, (HMENU)(INT_PTR)max_edit_id, NULL, NULL);
+    set_font(*max_edit, g_hFont);
+    register_ctrl(control_array, control_count, control_capacity, *max_edit);
+
+    *unit = CreateWindowExW(0, L"STATIC", i18n_get(STR_ENC_MAX_SIZE_UNIT),
+        WS_CHILD, 0, 0, 70, 22, parent, (HMENU)(INT_PTR)unit_id, NULL, NULL);
+    set_font(*unit, g_hFont);
+    register_ctrl(control_array, control_count, control_capacity, *unit);
+}
+
+static bool read_file_filters(
+    HWND hWnd,
+    HWND combo,
+    HWND max_size_edit,
+    ScannerFileType *out_file_type_filter,
+    uint64_t *out_max_file_size_bytes
+) {
+    wchar_t size_text[32] = {0};
+    GetWindowTextW(max_size_edit, size_text, (int)(sizeof(size_text) / sizeof(size_text[0])));
+    wchar_t *end = NULL;
+    errno = 0;
+    unsigned long long size_mb = wcstoull(size_text, &end, 10);
+    if (errno == ERANGE || end == size_text || *end != L'\0' ||
+        size_mb > UINT64_MAX / (1024ULL * 1024ULL)) {
+        MessageBoxW(hWnd, i18n_get(STR_ENC_MAX_SIZE_INVALID),
+            i18n_get_language() == LANG_ID ? L"Ukuran tidak valid" : L"Invalid size",
+            MB_OK | MB_ICONWARNING);
+        SetFocus(max_size_edit);
+        return false;
+    }
+
+    int selected = (int)SendMessageW(combo, CB_GETCURSEL, 0, 0);
+    if (selected < SCANNER_FILE_TYPE_ALL || selected > SCANNER_FILE_TYPE_VIDEOS) {
+        selected = SCANNER_FILE_TYPE_ALL;
+    }
+    *out_file_type_filter = (ScannerFileType)selected;
+    *out_max_file_size_bytes = size_mb == 0 ? 0 : (uint64_t)size_mb * 1024ULL * 1024ULL;
+    return true;
 }
 
 /* ========================================================================= */
@@ -425,6 +663,7 @@ static void show_page(int page_idx) {
     bool on_enc = (page_idx == 0);
     bool on_ren = (page_idx == 1);
     bool on_dup = (page_idx == 2);
+    bool on_model = (page_idx == 3);
 
     bool is_cfg = vault_is_configured();
 
@@ -451,6 +690,13 @@ static void show_page(int page_idx) {
     /* Page 3 Duplicate Controls */
     for (int i = 0; i < g_nDupCtrls; i++) {
         if (g_hDupCtrls[i]) ShowWindow(g_hDupCtrls[i], on_dup ? SW_SHOW : SW_HIDE);
+    }
+
+    for (int i = 0; i < g_nModelCtrls; i++) {
+        if (g_hModelCtrls[i]) ShowWindow(g_hModelCtrls[i], (on_model && g_bAuthenticated) ? SW_SHOW : SW_HIDE);
+    }
+    for (int i = 0; i < g_nModelLockCtrls; i++) {
+        if (g_hModelLockCtrls[i]) ShowWindow(g_hModelLockCtrls[i], (on_model && !g_bAuthenticated) ? SW_SHOW : SW_HIDE);
     }
 
     if (on_enc) {
@@ -490,6 +736,13 @@ static void show_page(int page_idx) {
             } else if (g_szLastFolder[0] != L'\0') {
                 SetWindowTextW(g_hDupEditFolder, g_szLastFolder);
             }
+        }
+    } else if (on_model) {
+        if (g_bAuthenticated) {
+            refresh_model_listview();
+        } else {
+            SetWindowTextW(g_hModelLockInfo, i18n_get(STR_MODEL_LOCKED));
+            SetFocus(g_hModelLockLogin);
         }
     }
 
@@ -878,7 +1131,7 @@ static DWORD WINAPI encrypt_worker_thread(LPVOID lpParam) {
         files = wp->custom_files;
     } else {
         files = scanner_create();
-        if (!scanner_scan(cfg.folder_path, cfg.recursive, cfg.op_mode, files) || files->count == 0) {
+        if (!files || !scanner_scan(cfg.folder_path, cfg.recursive, cfg.op_mode, files)) {
             PostMessageW(hWnd, WM_APP_LOG_MSG, 0, (LPARAM)_wcsdup(L"[INFO] Tidak ditemukan file yang dapat diproses di dalam folder ini."));
             if (files) scanner_free(files);
             SecureZeroMemory(&cfg, sizeof(cfg));
@@ -886,6 +1139,13 @@ static DWORD WINAPI encrypt_worker_thread(LPVOID lpParam) {
             PostMessageW(hWnd, WM_APP_FINISHED, 0, 0);
             return 0;
         }
+    }
+
+    size_t skipped_by_filter = scanner_filter_files(files, wp->file_type_filter, wp->max_file_size_bytes);
+    if (skipped_by_filter > 0) {
+        wchar_t filter_log[192];
+        swprintf(filter_log, 192, L"[INFO] %zu berkas dilewati karena filter tipe atau ukuran.", skipped_by_filter);
+        PostMessageW(hWnd, WM_APP_LOG_MSG, 0, (LPARAM)_wcsdup(filter_log));
     }
 
     if (!files || files->count == 0) {
@@ -997,12 +1257,17 @@ static void start_encryption_processing(HWND hWnd) {
         return;
     }
 
+    ScannerFileType file_type_filter = SCANNER_FILE_TYPE_ALL;
+    uint64_t max_file_size_bytes = 0;
+    if (!read_file_filters(hWnd, g_hEncFileType, g_hEncMaxSizeEdit, &file_type_filter, &max_file_size_bytes)) return;
+
     save_settings(folder);
 
     const wchar_t *session_pass = vault_get_session_password();
     if (!session_pass || wcslen(session_pass) == 0) {
         MessageBoxW(hWnd, L"Sesi autentikasi telah berakhir! Silakan masuk kembali.", L"Peringatan", MB_OK | MB_ICONWARNING);
         g_bAuthenticated = false;
+        clear_kiosapi_key();
         show_page(0);
         return;
     }
@@ -1017,6 +1282,8 @@ static void start_encryption_processing(HWND hWnd) {
     vault_get_recovery_email(wp->config.email, 255);
     wp->hWnd = hWnd;
     wp->custom_files = NULL;
+    wp->file_type_filter = file_type_filter;
+    wp->max_file_size_bytes = max_file_size_bytes;
 
     g_bIsWorking = true;
     g_bCancelRequested = false;
@@ -1074,6 +1341,10 @@ static void encrypt_selected_files(HWND hWnd) {
     int sel_count = ListView_GetSelectedCount(g_hEncExplorerList);
     if (sel_count == 0) return;
 
+    ScannerFileType file_type_filter = SCANNER_FILE_TYPE_ALL;
+    uint64_t max_file_size_bytes = 0;
+    if (!read_file_filters(hWnd, g_hEncFileType, g_hEncMaxSizeEdit, &file_type_filter, &max_file_size_bytes)) return;
+
     FileList *custom_files = scanner_create();
     if (!custom_files) return;
 
@@ -1100,12 +1371,13 @@ static void encrypt_selected_files(HWND hWnd) {
         }
     }
 
+    scanner_filter_files(custom_files, file_type_filter, max_file_size_bytes);
     if (custom_files->count == 0) {
         MessageBoxW(
             hWnd,
             (i18n_get_language() == LANG_ID) ?
-            L"Tidak ada berkas yang perlu dienkripsi (berkas yang dipilih mungkin sudah terenkripsi atau kosong)." :
-            L"No files to encrypt (selected files may already be encrypted or empty).",
+            L"Tidak ada berkas yang cocok dengan filter tipe file dan ukuran maksimum." :
+            L"No files match the selected file-type and maximum-size filters.",
             i18n_get(STR_APP_TITLE),
             MB_OK | MB_ICONINFORMATION
         );
@@ -1151,6 +1423,8 @@ static void encrypt_selected_files(HWND hWnd) {
     vault_get_recovery_email(wp->config.email, 255);
     wp->hWnd = hWnd;
     wp->custom_files = custom_files;
+    wp->file_type_filter = file_type_filter;
+    wp->max_file_size_bytes = max_file_size_bytes;
 
     g_bIsWorking = true;
     g_bCancelRequested = false;
@@ -1379,10 +1653,10 @@ static void update_method_ui_labels(int method_idx) {
         case 0: /* Replace */
             SetWindowTextW(g_hRenLblP1, i18n_get(STR_REN_LBL_FIND));
             SetWindowTextW(g_hRenLblP2, i18n_get(STR_REN_LBL_REPLACE));
-            SetWindowPos(g_hRenLblP1, NULL, 300, 140, 110, 20, SWP_NOZORDER);
-            SetWindowPos(g_hRenEditP1, NULL, 415, 137, 150, 24, SWP_NOZORDER);
-            SetWindowPos(g_hRenLblP2, NULL, 575, 140, 135, 20, SWP_NOZORDER);
-            SetWindowPos(g_hRenEditP2, NULL, 715, 137, 95, 24, SWP_NOZORDER);
+            SetWindowPos(g_hRenLblP1, NULL, 300, 170, 110, 20, SWP_NOZORDER);
+            SetWindowPos(g_hRenEditP1, NULL, 415, 167, 150, 24, SWP_NOZORDER);
+            SetWindowPos(g_hRenLblP2, NULL, 575, 170, 135, 20, SWP_NOZORDER);
+            SetWindowPos(g_hRenEditP2, NULL, 715, 167, 95, 24, SWP_NOZORDER);
 
             ShowWindow(g_hRenLblP1, SW_SHOW);
             ShowWindow(g_hRenEditP1, SW_SHOW);
@@ -1393,10 +1667,10 @@ static void update_method_ui_labels(int method_idx) {
         case 1: /* Add */
             SetWindowTextW(g_hRenLblP1, i18n_get(STR_REN_LBL_INSERT));
             SetWindowTextW(g_hRenLblP2, i18n_get(STR_REN_LBL_POS));
-            SetWindowPos(g_hRenLblP1, NULL, 300, 140, 100, 20, SWP_NOZORDER);
-            SetWindowPos(g_hRenEditP1, NULL, 405, 137, 180, 24, SWP_NOZORDER);
-            SetWindowPos(g_hRenLblP2, NULL, 595, 140, 60, 20, SWP_NOZORDER);
-            SetWindowPos(g_hRenComboP3, NULL, 660, 137, 150, 120, SWP_NOZORDER);
+            SetWindowPos(g_hRenLblP1, NULL, 300, 170, 100, 20, SWP_NOZORDER);
+            SetWindowPos(g_hRenEditP1, NULL, 405, 167, 180, 24, SWP_NOZORDER);
+            SetWindowPos(g_hRenLblP2, NULL, 595, 170, 60, 20, SWP_NOZORDER);
+            SetWindowPos(g_hRenComboP3, NULL, 660, 167, 150, 120, SWP_NOZORDER);
 
             SendMessage(g_hRenComboP3, CB_RESETCONTENT, 0, 0);
             SendMessageW(g_hRenComboP3, CB_ADDSTRING, 0, (LPARAM)i18n_get(STR_REN_POS_PREFIX));
@@ -1412,13 +1686,13 @@ static void update_method_ui_labels(int method_idx) {
         case 2: /* Pattern */
             SetWindowTextW(g_hRenLblP1, i18n_get(STR_REN_LBL_PATTERN));
             SetWindowTextW(g_hRenLblP2, i18n_get(STR_REN_LBL_STARTNUM));
-            SetWindowPos(g_hRenLblP1, NULL, 300, 140, 85, 20, SWP_NOZORDER);
-            SetWindowPos(g_hRenEditP1, NULL, 390, 137, 185, 24, SWP_NOZORDER);
-            SetWindowPos(g_hRenLblP2, NULL, 585, 140, 85, 20, SWP_NOZORDER);
+            SetWindowPos(g_hRenLblP1, NULL, 300, 170, 85, 20, SWP_NOZORDER);
+            SetWindowPos(g_hRenEditP1, NULL, 390, 167, 185, 24, SWP_NOZORDER);
+            SetWindowPos(g_hRenLblP2, NULL, 585, 170, 85, 20, SWP_NOZORDER);
 
-            SetWindowPos(g_hRenBtnDec2, NULL, 675, 137, 28, 24, SWP_NOZORDER);
-            SetWindowPos(g_hRenEditNum2, NULL, 706, 137, 45, 24, SWP_NOZORDER);
-            SetWindowPos(g_hRenBtnInc2, NULL, 754, 137, 28, 24, SWP_NOZORDER);
+            SetWindowPos(g_hRenBtnDec2, NULL, 675, 167, 28, 24, SWP_NOZORDER);
+            SetWindowPos(g_hRenEditNum2, NULL, 706, 167, 45, 24, SWP_NOZORDER);
+            SetWindowPos(g_hRenBtnInc2, NULL, 754, 167, 28, 24, SWP_NOZORDER);
 
             if (GetWindowTextLengthW(g_hRenEditP1) == 0) {
                 SetWindowTextW(g_hRenEditP1, L"Map_<inc:01>");
@@ -1437,8 +1711,8 @@ static void update_method_ui_labels(int method_idx) {
 
         case 3: /* Case */
             SetWindowTextW(g_hRenLblP1, i18n_get(STR_REN_LBL_CASERULE));
-            SetWindowPos(g_hRenLblP1, NULL, 300, 140, 100, 20, SWP_NOZORDER);
-            SetWindowPos(g_hRenComboP3, NULL, 405, 137, 250, 120, SWP_NOZORDER);
+            SetWindowPos(g_hRenLblP1, NULL, 300, 170, 100, 20, SWP_NOZORDER);
+            SetWindowPos(g_hRenComboP3, NULL, 405, 167, 250, 120, SWP_NOZORDER);
 
             SendMessage(g_hRenComboP3, CB_RESETCONTENT, 0, 0);
             SendMessageW(g_hRenComboP3, CB_ADDSTRING, 0, (LPARAM)i18n_get(STR_REN_CASE_LOWER));
@@ -1454,15 +1728,15 @@ static void update_method_ui_labels(int method_idx) {
         case 4: /* Trim */
             SetWindowTextW(g_hRenLblP1, i18n_get(STR_REN_TRIM_START));
             SetWindowTextW(g_hRenLblP2, i18n_get(STR_REN_TRIM_END));
-            SetWindowPos(g_hRenLblP1, NULL, 300, 140, 105, 20, SWP_NOZORDER);
-            SetWindowPos(g_hRenBtnDec1, NULL, 410, 137, 28, 24, SWP_NOZORDER);
-            SetWindowPos(g_hRenEditNum1, NULL, 441, 137, 40, 24, SWP_NOZORDER);
-            SetWindowPos(g_hRenBtnInc1, NULL, 484, 137, 28, 24, SWP_NOZORDER);
+            SetWindowPos(g_hRenLblP1, NULL, 300, 170, 105, 20, SWP_NOZORDER);
+            SetWindowPos(g_hRenBtnDec1, NULL, 410, 167, 28, 24, SWP_NOZORDER);
+            SetWindowPos(g_hRenEditNum1, NULL, 441, 167, 40, 24, SWP_NOZORDER);
+            SetWindowPos(g_hRenBtnInc1, NULL, 484, 167, 28, 24, SWP_NOZORDER);
 
-            SetWindowPos(g_hRenLblP2, NULL, 525, 140, 120, 20, SWP_NOZORDER);
-            SetWindowPos(g_hRenBtnDec2, NULL, 650, 137, 28, 24, SWP_NOZORDER);
-            SetWindowPos(g_hRenEditNum2, NULL, 681, 137, 40, 24, SWP_NOZORDER);
-            SetWindowPos(g_hRenBtnInc2, NULL, 724, 137, 28, 24, SWP_NOZORDER);
+            SetWindowPos(g_hRenLblP2, NULL, 525, 170, 120, 20, SWP_NOZORDER);
+            SetWindowPos(g_hRenBtnDec2, NULL, 650, 167, 28, 24, SWP_NOZORDER);
+            SetWindowPos(g_hRenEditNum2, NULL, 681, 167, 40, 24, SWP_NOZORDER);
+            SetWindowPos(g_hRenBtnInc2, NULL, 724, 167, 28, 24, SWP_NOZORDER);
 
             if (GetWindowTextLengthW(g_hRenEditNum1) == 0) {
                 SetWindowTextW(g_hRenEditNum1, L"0");
@@ -1537,7 +1811,6 @@ static void trigger_live_preview(void) {
 }
 
 static void scan_renamer_folder(HWND hWnd) {
-    (void)hWnd;
     wchar_t raw[MAX_PATH * 2] = {0};
     GetWindowTextW(g_hRenEditFolder, raw, MAX_PATH * 2);
 
@@ -1553,7 +1826,10 @@ static void scan_renamer_folder(HWND hWnd) {
     save_settings(folder);
 
     bool recursive = (SendMessage(g_hRenChkRecursive, BM_GETCHECK, 0, 0) == BST_CHECKED);
-    renamer_scan_folder(g_pRenameList, folder, recursive);
+    ScannerFileType file_type_filter = SCANNER_FILE_TYPE_ALL;
+    uint64_t max_file_size_bytes = 0;
+    if (!read_file_filters(hWnd, g_hRenFileType, g_hRenMaxSizeEdit, &file_type_filter, &max_file_size_bytes)) return;
+    renamer_scan_folder_filtered(g_pRenameList, folder, recursive, file_type_filter, max_file_size_bytes);
 
     trigger_live_preview();
     populate_renamer_listview();
@@ -1888,7 +2164,14 @@ static void layout_controls(HWND hWnd, int cx, int cy) {
             SetWindowPos(g_hChkRecursive, NULL, cx - 265, topY + 1, 140, 22, SWP_NOZORDER);
             SetWindowPos(g_hChkRemember1, NULL, cx - 115, topY + 1, 100, 22, SWP_NOZORDER);
 
-            int paneY = 72;
+            SetWindowPos(g_hEncFileTypeLabel, NULL, 15, 72, 65, 22, SWP_NOZORDER);
+            SetWindowPos(g_hEncFileType, NULL, 82, 69, 140, 120, SWP_NOZORDER);
+            SetWindowPos(g_hEncFileExtensions, NULL, 232, 72, cx - 532, 22, SWP_NOZORDER);
+            SetWindowPos(g_hEncMaxSizeLabel, NULL, cx - 290, 72, 95, 22, SWP_NOZORDER);
+            SetWindowPos(g_hEncMaxSizeEdit, NULL, cx - 190, 69, 55, 24, SWP_NOZORDER);
+            SetWindowPos(g_hEncMaxSizeUnit, NULL, cx - 130, 72, 115, 22, SWP_NOZORDER);
+
+            int paneY = 104;
             int bottomAreaH = 175;
             int paneH = cy - paneY - bottomAreaH;
             if (paneH < 150) paneH = 150;
@@ -1907,17 +2190,23 @@ static void layout_controls(HWND hWnd, int cx, int cy) {
         }
     } else if (cur_tab == 1) {
         /* Page 2 (Renamer) Layout */
-        SetWindowPos(g_hRenGrp1, NULL, 15, 35, cx - 30, 65, SWP_NOZORDER);
+        SetWindowPos(g_hRenGrp1, NULL, 15, 35, cx - 30, 95, SWP_NOZORDER);
         SetWindowPos(g_hRenEditFolder, NULL, 25, 60, cx - 365, 24, SWP_NOZORDER);
         SetWindowPos(g_hRenBtnBrowse, NULL, cx - 330, 59, 80, 26, SWP_NOZORDER);
         SetWindowPos(g_hRenChkRecursive, NULL, cx - 240, 61, 95, 22, SWP_NOZORDER);
         SetWindowPos(g_hRenChkRemember2, NULL, cx - 135, 61, 110, 22, SWP_NOZORDER);
+        SetWindowPos(g_hRenFileTypeLabel, NULL, 25, 96, 40, 22, SWP_NOZORDER);
+        SetWindowPos(g_hRenFileType, NULL, 68, 93, 130, 120, SWP_NOZORDER);
+        SetWindowPos(g_hRenFileExtensions, NULL, 205, 96, cx - 500, 22, SWP_NOZORDER);
+        SetWindowPos(g_hRenMaxSizeLabel, NULL, cx - 285, 96, 95, 22, SWP_NOZORDER);
+        SetWindowPos(g_hRenMaxSizeEdit, NULL, cx - 185, 93, 55, 24, SWP_NOZORDER);
+        SetWindowPos(g_hRenMaxSizeUnit, NULL, cx - 125, 96, 105, 22, SWP_NOZORDER);
 
-        SetWindowPos(g_hRenGrp2, NULL, 15, 108, cx - 30, 75, SWP_NOZORDER);
-        SetWindowPos(g_hRenLblMethod, NULL, 25, 133, 55, 20, SWP_NOZORDER);
-        SetWindowPos(g_hRenComboMethod, NULL, 85, 130, 195, 140, SWP_NOZORDER);
+        SetWindowPos(g_hRenGrp2, NULL, 15, 138, cx - 30, 75, SWP_NOZORDER);
+        SetWindowPos(g_hRenLblMethod, NULL, 25, 163, 55, 20, SWP_NOZORDER);
+        SetWindowPos(g_hRenComboMethod, NULL, 85, 160, 195, 140, SWP_NOZORDER);
 
-        int listY = 192;
+        int listY = 222;
         int listH = cy - listY - 50;
         if (listH < 120) listH = 120;
         SetWindowPos(g_hRenList, NULL, 15, listY, cx - 30, listH, SWP_NOZORDER);
@@ -1929,13 +2218,19 @@ static void layout_controls(HWND hWnd, int cx, int cy) {
         SetWindowPos(g_hRenStaticStatus, NULL, 515, btnY + 4, cx - 530, 20, SWP_NOZORDER);
     } else if (cur_tab == 2) {
         /* Page 3 (Duplicate Finder) Layout */
-        SetWindowPos(g_hDupGrpFolder, NULL, 15, 35, cx - 30, 65, SWP_NOZORDER);
+        SetWindowPos(g_hDupGrpFolder, NULL, 15, 35, cx - 30, 95, SWP_NOZORDER);
         SetWindowPos(g_hDupEditFolder, NULL, 25, 60, cx - 395, 24, SWP_NOZORDER);
         SetWindowPos(g_hDupBtnBrowse, NULL, cx - 360, 59, 80, 26, SWP_NOZORDER);
         SetWindowPos(g_hDupChkRecursive, NULL, cx - 270, 61, 130, 22, SWP_NOZORDER);
         SetWindowPos(g_hDupBtnScan, NULL, cx - 130, 59, 115, 26, SWP_NOZORDER);
+        SetWindowPos(g_hDupFileTypeLabel, NULL, 25, 96, 40, 22, SWP_NOZORDER);
+        SetWindowPos(g_hDupFileType, NULL, 68, 93, 130, 120, SWP_NOZORDER);
+        SetWindowPos(g_hDupFileExtensions, NULL, 205, 96, cx - 500, 22, SWP_NOZORDER);
+        SetWindowPos(g_hDupMaxSizeLabel, NULL, cx - 285, 96, 95, 22, SWP_NOZORDER);
+        SetWindowPos(g_hDupMaxSizeEdit, NULL, cx - 185, 93, 55, 24, SWP_NOZORDER);
+        SetWindowPos(g_hDupMaxSizeUnit, NULL, cx - 125, 96, 105, 22, SWP_NOZORDER);
 
-        int listY = 108;
+        int listY = 138;
         int bottomAreaH = 80;
         int listH = cy - listY - bottomAreaH;
         if (listH < 120) listH = 120;
@@ -1951,6 +2246,30 @@ static void layout_controls(HWND hWnd, int cx, int cy) {
         SetWindowPos(g_hDupBtnDeselAll, NULL, 315, btnY, 100, 28, SWP_NOZORDER);
         SetWindowPos(g_hDupBtnDelete, NULL, 425, btnY, 200, 28, SWP_NOZORDER);
         SetWindowPos(g_hDupBtnStop, NULL, cx - 115, btnY, 100, 28, SWP_NOZORDER);
+    } else if (cur_tab == 3) {
+        if (g_bAuthenticated) {
+            SetWindowPos(g_hModelBtnTest, NULL, 15, 38, 160, 30, SWP_NOZORDER);
+            SetWindowPos(g_hModelBtnStop, NULL, 185, 38, 100, 30, SWP_NOZORDER);
+            SetWindowPos(g_hModelMaxInputLabel, NULL, 300, 40, 90, 22, SWP_NOZORDER);
+            SetWindowPos(g_hModelMaxInput, NULL, 390, 38, 82, 24, SWP_NOZORDER);
+            SetWindowPos(g_hModelMaxOutputLabel, NULL, 485, 40, 100, 22, SWP_NOZORDER);
+            SetWindowPos(g_hModelMaxOutput, NULL, 585, 38, 82, 24, SWP_NOZORDER);
+            SetWindowPos(g_hModelStatus, NULL, 15, 68, cx - 30, 20, SWP_NOZORDER);
+            SetWindowPos(g_hModelProgress, NULL, 15, 91, cx - 30, 12, SWP_NOZORDER);
+
+            int listY = 111;
+            int listH = cy - listY - 15;
+            if (listH < 120) listH = 120;
+            SetWindowPos(g_hModelList, NULL, 15, listY, cx - 30, listH, SWP_NOZORDER);
+        } else {
+            int cardW = 520;
+            int cardH = 150;
+            int cardX = (cx - cardW) / 2;
+            int cardY = (cy - cardH) / 2;
+            if (cardY < 40) cardY = 40;
+            SetWindowPos(g_hModelLockInfo, NULL, cardX + 20, cardY + 20, cardW - 40, 45, SWP_NOZORDER);
+            SetWindowPos(g_hModelLockLogin, NULL, cardX + 150, cardY + 85, cardW - 300, 36, SWP_NOZORDER);
+        }
     }
 }
 
@@ -1971,6 +2290,7 @@ static HMENU create_app_menu(void) {
     AppendMenuW(hViewMenu, MF_STRING, IDM_VIEW_ENCRYPT, i18n_get(STR_TAB_ENCRYPT));
     AppendMenuW(hViewMenu, MF_STRING, IDM_VIEW_RENAME, i18n_get(STR_TAB_RENAME));
     AppendMenuW(hViewMenu, MF_STRING, IDM_VIEW_DUPLICATES, i18n_get(STR_TAB_DUPLICATES));
+    AppendMenuW(hViewMenu, MF_STRING, IDM_VIEW_MODEL_TESTER, i18n_get(STR_TAB_MODEL_TESTER));
     AppendMenuW(hMenuBar, MF_POPUP, (UINT_PTR)hViewMenu, i18n_get(STR_MENU_MODES));
 
     HMENU hLangMenu = CreatePopupMenu();
@@ -2023,6 +2343,8 @@ static void update_ui_texts(HWND hWnd) {
         TabCtrl_SetItem(g_hTab, 1, &tie);
         tie.pszText = (LPWSTR)i18n_get(STR_TAB_DUPLICATES);
         TabCtrl_SetItem(g_hTab, 2, &tie);
+        tie.pszText = (LPWSTR)i18n_get(STR_TAB_MODEL_TESTER);
+        TabCtrl_SetItem(g_hTab, 3, &tie);
     }
 
     /* Refresh Setup View */
@@ -2047,6 +2369,8 @@ static void update_ui_texts(HWND hWnd) {
     if (g_hBtnBrowse) SetWindowTextW(g_hBtnBrowse, i18n_get(STR_BTN_BROWSE));
     if (g_hChkRecursive) SetWindowTextW(g_hChkRecursive, i18n_get(STR_CHK_RECURSIVE));
     if (g_hChkRemember1) SetWindowTextW(g_hChkRemember1, i18n_get(STR_CHK_REMEMBER));
+    if (g_hEncFileTypeLabel) SetWindowTextW(g_hEncFileTypeLabel, i18n_get(STR_ENC_FILE_TYPE_LABEL));
+    refresh_file_filter_controls(g_hEncFileType, g_hEncFileExtensions, g_hEncMaxSizeLabel, g_hEncMaxSizeUnit);
 
     if (g_hEncExplorerList) {
         LVCOLUMNW col = {0};
@@ -2072,6 +2396,8 @@ static void update_ui_texts(HWND hWnd) {
     if (g_hRenBtnBrowse) SetWindowTextW(g_hRenBtnBrowse, i18n_get(STR_BTN_BROWSE));
     if (g_hRenChkRecursive) SetWindowTextW(g_hRenChkRecursive, i18n_get(STR_CHK_RECURSIVE));
     if (g_hRenChkRemember2) SetWindowTextW(g_hRenChkRemember2, i18n_get(STR_CHK_REMEMBER));
+    if (g_hRenFileTypeLabel) SetWindowTextW(g_hRenFileTypeLabel, i18n_get(STR_ENC_FILE_TYPE_LABEL));
+    refresh_file_filter_controls(g_hRenFileType, g_hRenFileExtensions, g_hRenMaxSizeLabel, g_hRenMaxSizeUnit);
     if (g_hRenGrp2) SetWindowTextW(g_hRenGrp2, i18n_get(STR_REN_GRP_METHOD));
     if (g_hRenLblMethod) SetWindowTextW(g_hRenLblMethod, i18n_get(STR_REN_LBL_METHOD));
 
@@ -2109,6 +2435,8 @@ static void update_ui_texts(HWND hWnd) {
     if (g_hDupBtnBrowse) SetWindowTextW(g_hDupBtnBrowse, i18n_get(STR_BTN_BROWSE));
     if (g_hDupChkRecursive) SetWindowTextW(g_hDupChkRecursive, i18n_get(STR_CHK_RECURSIVE));
     if (g_hDupBtnScan) SetWindowTextW(g_hDupBtnScan, i18n_get(STR_DUP_BTN_SCAN));
+    if (g_hDupFileTypeLabel) SetWindowTextW(g_hDupFileTypeLabel, i18n_get(STR_ENC_FILE_TYPE_LABEL));
+    refresh_file_filter_controls(g_hDupFileType, g_hDupFileExtensions, g_hDupMaxSizeLabel, g_hDupMaxSizeUnit);
     if (g_hDupBtnStop) SetWindowTextW(g_hDupBtnStop, i18n_get(STR_DUP_BTN_STOP));
     if (g_hDupBtnAutoSel) SetWindowTextW(g_hDupBtnAutoSel, i18n_get(STR_DUP_BTN_AUTOSEL));
     if (g_hDupBtnSelAll) SetWindowTextW(g_hDupBtnSelAll, i18n_get(STR_DUP_BTN_SEL_ALL));
@@ -2130,10 +2458,530 @@ static void update_ui_texts(HWND hWnd) {
         ListView_SetColumn(g_hDupList, 4, &c);
     }
 
+    if (g_hModelLockInfo) SetWindowTextW(g_hModelLockInfo, i18n_get(STR_MODEL_LOCKED));
+    if (g_hModelLockLogin) SetWindowTextW(g_hModelLockLogin, i18n_get(STR_LOGIN_BTN_MASUK));
+    if (g_hModelBtnTest) SetWindowTextW(g_hModelBtnTest, i18n_get(STR_MODEL_BTN_TEST));
+    if (g_hModelBtnStop) SetWindowTextW(g_hModelBtnStop, i18n_get(STR_MODEL_BTN_STOP));
+    if (g_hModelMaxInputLabel) SetWindowTextW(g_hModelMaxInputLabel, i18n_get(STR_MODEL_MAX_INPUT_PRICE));
+    if (g_hModelMaxOutputLabel) SetWindowTextW(g_hModelMaxOutputLabel, i18n_get(STR_MODEL_MAX_OUTPUT_PRICE));
+    if (g_hModelList) {
+        LVCOLUMNW c = {0};
+        c.mask = LVCF_TEXT;
+        c.pszText = (LPWSTR)i18n_get(STR_MODEL_COL_NAME);
+        ListView_SetColumn(g_hModelList, 0, &c);
+        c.pszText = (LPWSTR)i18n_get(STR_MODEL_COL_PROVIDER);
+        ListView_SetColumn(g_hModelList, 1, &c);
+        c.pszText = (LPWSTR)i18n_get(STR_MODEL_COL_UPTIME);
+        ListView_SetColumn(g_hModelList, 2, &c);
+        c.pszText = (LPWSTR)i18n_get(STR_MODEL_COL_OUTPUT);
+        ListView_SetColumn(g_hModelList, 3, &c);
+        c.pszText = (LPWSTR)i18n_get(STR_MODEL_COL_INPUT);
+        ListView_SetColumn(g_hModelList, 4, &c);
+        c.pszText = (LPWSTR)i18n_get(STR_MODEL_COL_LATENCY);
+        ListView_SetColumn(g_hModelList, 5, &c);
+        c.pszText = (LPWSTR)i18n_get(STR_MODEL_COL_RESULT);
+        ListView_SetColumn(g_hModelList, 6, &c);
+    }
+
     RECT rc;
     GetClientRect(hWnd, &rc);
     layout_controls(hWnd, rc.right - rc.left, rc.bottom - rc.top);
     InvalidateRect(hWnd, NULL, TRUE);
+}
+
+static bool get_app_database_path(wchar_t *out_path, size_t capacity) {
+    if (!out_path || capacity == 0) return false;
+    wchar_t module_path[MAX_PATH * 2] = {0};
+    DWORD length = GetModuleFileNameW(NULL, module_path, (DWORD)(sizeof(module_path) / sizeof(module_path[0])));
+    if (length == 0 || length >= sizeof(module_path) / sizeof(module_path[0])) return false;
+    wchar_t *separator = wcsrchr(module_path, L'\\');
+    if (!separator) return false;
+    *separator = L'\0';
+    int result = swprintf(out_path, capacity, L"%ls\\kiosapi-models.db", module_path);
+    return result >= 0 && (size_t)result < capacity;
+}
+
+static bool get_vscode_model_config_path(wchar_t *out_path, size_t capacity) {
+    if (!out_path || capacity == 0) return false;
+    if (FAILED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, SHGFP_TYPE_CURRENT, out_path))) return false;
+    size_t used = wcslen(out_path);
+    const wchar_t suffix[] = L"\\Code\\User\\chatLanguageModels.json";
+    size_t suffix_length = sizeof(suffix) / sizeof(suffix[0]);
+    if (used + suffix_length > capacity) return false;
+    wcscat(out_path, suffix);
+    return true;
+}
+
+static void copy_utf8_to_wide(const char *source, wchar_t *destination, size_t capacity) {
+    if (!destination || capacity == 0) return;
+    destination[0] = L'\0';
+    if (!source || !source[0]) return;
+    int converted = MultiByteToWideChar(CP_UTF8, 0, source, -1, destination, (int)capacity);
+    if (converted == 0) destination[0] = L'\0';
+    destination[capacity - 1] = L'\0';
+}
+
+static void set_list_text(int row, int column, const wchar_t *text) {
+    if (!g_hModelList) return;
+    LVITEMW item = {0};
+    item.iSubItem = column;
+    item.pszText = (LPWSTR)(text ? text : L"");
+    ListView_SetItemText(g_hModelList, row, column, item.pszText);
+}
+
+static bool parse_model_price_filter(HWND edit, bool *out_has_limit, double *out_limit) {
+    wchar_t text[64] = {0};
+    if (!edit || !out_has_limit || !out_limit) return false;
+    if (GetWindowTextLengthW(edit) >= (int)(sizeof(text) / sizeof(text[0]))) return false;
+    GetWindowTextW(edit, text, (int)(sizeof(text) / sizeof(text[0])));
+    if (!text[0]) {
+        *out_has_limit = false;
+        *out_limit = 0.0;
+        return true;
+    }
+
+    bool has_digit = false;
+    bool has_decimal = false;
+    for (const wchar_t *it = text; *it; ++it) {
+        if (*it >= L'0' && *it <= L'9') {
+            has_digit = true;
+        } else if (*it == L'.' && !has_decimal) {
+            has_decimal = true;
+        } else {
+            return false;
+        }
+    }
+    if (!has_digit) return false;
+
+    errno = 0;
+    wchar_t *end = NULL;
+    double value = wcstod(text, &end);
+    if (errno == ERANGE || !end || *end || !isfinite(value) || value < 0.0) return false;
+    *out_has_limit = true;
+    *out_limit = value;
+    return true;
+}
+
+static void refresh_model_listview(void) {
+    if (!g_hModelList || g_bModelTesting) return;
+    bool has_max_input = false;
+    bool has_max_output = false;
+    double max_input = 0.0;
+    double max_output = 0.0;
+    if (!parse_model_price_filter(g_hModelMaxInput, &has_max_input, &max_input) ||
+        !parse_model_price_filter(g_hModelMaxOutput, &has_max_output, &max_output)) {
+        ListView_DeleteAllItems(g_hModelList);
+        g_modelVisibleCount = 0;
+        EnableWindow(g_hModelBtnTest, FALSE);
+        SetWindowTextW(g_hModelStatus, i18n_get(STR_MODEL_PRICE_FILTER_INVALID));
+        return;
+    }
+    if (g_modelRows) {
+        free(g_modelRows);
+        g_modelRows = NULL;
+        g_modelRowCount = 0;
+    }
+    g_modelVisibleCount = 0;
+    ListView_DeleteAllItems(g_hModelList);
+    g_bModelDbReady = false;
+
+    wchar_t database_path[MAX_PATH * 2] = {0};
+    char error[256] = {0};
+    if (!get_app_database_path(database_path, MAX_PATH * 2) ||
+        !model_tester_load_rows(
+            database_path,
+            g_modelSortColumn,
+            g_modelSortDescending,
+            &g_modelRows,
+            &g_modelRowCount,
+            error,
+            sizeof(error)
+        )) {
+        wchar_t wide_error[256] = {0};
+        copy_utf8_to_wide(error[0] ? error : "Could not locate kiosapi-models.db beside the application.", wide_error, 256);
+        wchar_t status[320];
+        swprintf(status, 320, L"Database error: %ls", wide_error);
+        SetWindowTextW(g_hModelStatus, status);
+        EnableWindow(g_hModelBtnTest, FALSE);
+        return;
+    }
+    g_bModelDbReady = true;
+
+    for (size_t i = 0; i < g_modelRowCount; i++) {
+        ModelTestRow *row = &g_modelRows[i];
+        if (!model_tester_row_matches_price_filter(
+                row, has_max_input, max_input, has_max_output, max_output)) {
+            continue;
+        }
+        wchar_t name[MODEL_TEST_NAME_CAPACITY] = {0};
+        wchar_t provider[MODEL_TEST_PROVIDER_CAPACITY] = {0};
+        copy_utf8_to_wide(row->model_name, name, MODEL_TEST_NAME_CAPACITY);
+        copy_utf8_to_wide(row->provider, provider, MODEL_TEST_PROVIDER_CAPACITY);
+
+        LVITEMW item = {0};
+        item.mask = LVIF_TEXT | LVIF_PARAM;
+        item.iItem = (int)i;
+        item.pszText = name;
+        item.lParam = (LPARAM)i;
+        int index = ListView_InsertItem(g_hModelList, &item);
+        if (index < 0) continue;
+
+        set_list_text(index, 1, provider);
+        wchar_t value[128];
+        if (row->has_uptime) {
+            swprintf(value, 128, L"%.2f%% (%d/%d)", row->uptime_percent, row->success_count, row->test_count);
+        } else {
+            wcscpy(value, L"—");
+        }
+        set_list_text(index, 2, value);
+
+        if (row->has_output_price) {
+            wchar_t currency[8] = {0};
+            copy_utf8_to_wide(row->currency, currency, 8);
+            swprintf(value, 128, L"%ls%.6g", currency, row->output_price_per_1m);
+        } else {
+            wcscpy(value, L"N/A");
+        }
+        set_list_text(index, 3, value);
+
+        if (row->has_input_price) {
+            wchar_t currency[8] = {0};
+            copy_utf8_to_wide(row->currency, currency, 8);
+            swprintf(value, 128, L"%ls%.6g", currency, row->input_price_per_1m);
+        } else {
+            wcscpy(value, L"N/A");
+        }
+        set_list_text(index, 4, value);
+
+        if (row->has_last_latency) {
+            swprintf(value, 128, L"%.0f ms", row->last_latency_ms);
+        } else {
+            wcscpy(value, L"—");
+        }
+        set_list_text(index, 5, value);
+        copy_utf8_to_wide(row->last_result, value, 128);
+        set_list_text(index, 6, value[0] ? value : L"—");
+        g_modelVisibleCount++;
+    }
+
+    SendMessageW(g_hModelProgress, PBM_SETRANGE32, 0, (LPARAM)g_modelVisibleCount);
+    SendMessageW(g_hModelProgress, PBM_SETPOS, 0, 0);
+    update_model_ready_status();
+}
+
+static void update_model_ready_status(void) {
+    if (!g_bModelDbReady || !g_hModelStatus) return;
+    bool has_limit = false;
+    double limit = 0.0;
+    if (!parse_model_price_filter(g_hModelMaxInput, &has_limit, &limit) ||
+        !parse_model_price_filter(g_hModelMaxOutput, &has_limit, &limit)) {
+        SetWindowTextW(g_hModelStatus, i18n_get(STR_MODEL_PRICE_FILTER_INVALID));
+        EnableWindow(g_hModelBtnTest, FALSE);
+        return;
+    }
+    if (g_modelRowCount > 0 && g_modelVisibleCount == 0) {
+        SetWindowTextW(g_hModelStatus, i18n_get(STR_MODEL_PRICE_FILTER_NO_MATCH));
+        EnableWindow(g_hModelBtnTest, FALSE);
+        return;
+    }
+    if (g_bKiosapiKeyReady) {
+        SetWindowTextW(g_hModelStatus, i18n_get(STR_MODEL_STATUS_KEY_READY));
+    } else if (g_kiosapiKeyError[0]) {
+        SetWindowTextW(g_hModelStatus, g_kiosapiKeyError);
+    } else {
+        SetWindowTextW(g_hModelStatus, i18n_get(STR_MODEL_STATUS_KEY_MISSING));
+    }
+    EnableWindow(g_hModelBtnTest,
+        g_bAuthenticated && g_bKiosapiKeyReady && !g_bModelTesting && g_modelVisibleCount > 0);
+}
+
+static void clear_kiosapi_key(void) {
+    SecureZeroMemory(g_kiosapiKey, sizeof(g_kiosapiKey));
+    g_kiosapiKeyLen = 0;
+    g_bKiosapiKeyReady = false;
+}
+
+static void unlock_kiosapi_key(const wchar_t *password) {
+    clear_kiosapi_key();
+    g_kiosapiKeyError[0] = L'\0';
+    if (!kiosapi_key_load(
+            password,
+            g_kiosapiKey,
+            sizeof(g_kiosapiKey),
+            &g_kiosapiKeyLen,
+            g_kiosapiKeyError,
+            sizeof(g_kiosapiKeyError) / sizeof(g_kiosapiKeyError[0]))) {
+        clear_kiosapi_key();
+        return;
+    }
+    g_bKiosapiKeyReady = true;
+}
+
+static void model_test_progress(
+    int completed,
+    int total,
+    const char *model_name,
+    bool succeeded,
+    const char *result,
+    void *user_data
+) {
+    HWND hWnd = (HWND)user_data;
+    if (!hWnd || !IsWindow(hWnd)) return;
+    ModelProgressPayload *payload = (ModelProgressPayload *)calloc(1, sizeof(*payload));
+    if (!payload) return;
+    payload->completed = completed;
+    payload->total = total;
+    payload->succeeded = succeeded;
+    copy_utf8_to_wide(model_name, payload->model_name, MODEL_TEST_NAME_CAPACITY);
+    copy_utf8_to_wide(result, payload->result, MODEL_TEST_RESULT_CAPACITY);
+    if (!PostMessageW(hWnd, WM_APP_MODEL_PROGRESS, 0, (LPARAM)payload)) free(payload);
+}
+
+static DWORD WINAPI model_test_worker_thread(LPVOID parameter) {
+    ModelWorkerParams *params = (ModelWorkerParams *)parameter;
+    if (!params) return 0;
+    ModelFinishedPayload *finished = (ModelFinishedPayload *)calloc(1, sizeof(*finished));
+    if (finished) {
+        char error[256] = {0};
+        finished->success = model_tester_run_selected(
+            params->database_path, params->api_key, params->selected_model_names, params->selected_model_count,
+            &g_bModelCancel, model_test_progress, params->hWnd, &finished->completed,
+            &finished->succeeded, &finished->failed, &finished->cancelled, error, sizeof(error)
+        );
+        copy_utf8_to_wide(error, finished->error, sizeof(finished->error) / sizeof(finished->error[0]));
+        if (!PostMessageW(params->hWnd, WM_APP_MODEL_FINISHED, 0, (LPARAM)finished)) free(finished);
+    } else {
+        PostMessageW(params->hWnd, WM_APP_MODEL_FINISHED, 0, 0);
+    }
+
+    free(params->selected_model_names);
+    SecureZeroMemory(params, sizeof(*params));
+    free(params);
+    return 0;
+}
+
+static size_t get_model_names(const char ***out_names, bool selected_only) {
+    *out_names = NULL;
+    int expected_count = selected_only
+        ? ListView_GetSelectedCount(g_hModelList)
+        : ListView_GetItemCount(g_hModelList);
+    if (expected_count <= 0 || !g_modelRows) return 0;
+
+    const char **names = (const char **)calloc((size_t)expected_count, sizeof(*names));
+    if (!names) return 0;
+    size_t count = 0;
+    int index = selected_only ? -1 : 0;
+    while (selected_only
+            ? ((index = ListView_GetNextItem(g_hModelList, index, LVNI_SELECTED)) >= 0)
+            : index < ListView_GetItemCount(g_hModelList)) {
+        LVITEMW item = {0};
+        item.mask = LVIF_PARAM;
+        item.iItem = index;
+        if (ListView_GetItem(g_hModelList, &item) &&
+            item.lParam >= 0 && (size_t)item.lParam < g_modelRowCount) {
+            names[count++] = g_modelRows[item.lParam].model_name;
+        }
+        if (!selected_only) index++;
+    }
+    if (count == 0) {
+        free(names);
+        return 0;
+    }
+    *out_names = names;
+    return count;
+}
+
+static void start_model_tests(HWND hWnd, bool selected_only) {
+    if (!g_bAuthenticated || !g_bKiosapiKeyReady || g_bModelTesting) return;
+    if (g_modelVisibleCount == 0) refresh_model_listview();
+    if (g_modelVisibleCount == 0) {
+        MessageBoxW(hWnd, i18n_get(STR_MODEL_PRICE_FILTER_NO_MATCH),
+            i18n_get_language() == LANG_ID ? L"Tidak Ada Model" : L"No Models",
+            MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+
+    const char **selected_names = NULL;
+    size_t test_count = get_model_names(&selected_names, selected_only);
+    if (test_count == 0) {
+        int selected_rows = ListView_GetSelectedCount(g_hModelList);
+        MessageBoxW(hWnd,
+            selected_only && selected_rows > 0
+                ? (i18n_get_language() == LANG_ID ? L"Memori tidak cukup untuk menyiapkan model terpilih." : L"Not enough memory to prepare the selected models.")
+                : (selected_only
+                    ? (i18n_get_language() == LANG_ID ? L"Pilih satu atau beberapa model terlebih dahulu." : L"Select one or more models first.")
+                    : (i18n_get_language() == LANG_ID ? L"Memori tidak cukup untuk menyiapkan model." : L"Not enough memory to prepare the models.")),
+            selected_only && selected_rows > 0
+                ? (i18n_get_language() == LANG_ID ? L"Kesalahan" : L"Error")
+                : (selected_only
+                    ? (i18n_get_language() == LANG_ID ? L"Tidak Ada Model Dipilih" : L"No Models Selected")
+                    : (i18n_get_language() == LANG_ID ? L"Kesalahan" : L"Error")),
+            MB_OK | ((selected_only && selected_rows == 0) ? MB_ICONINFORMATION : MB_ICONERROR));
+        return;
+    }
+
+    wchar_t confirmation[512];
+    swprintf(confirmation, 512, i18n_get(selected_only ? STR_MODEL_CONFIRM_SELECTED : STR_MODEL_CONFIRM), (int)test_count);
+    if (MessageBoxW(
+            hWnd,
+            confirmation,
+            selected_only
+                ? (i18n_get_language() == LANG_ID ? L"Konfirmasi Pemindaian Model Terpilih" : L"Confirm Scan Selected Models")
+                : (i18n_get_language() == LANG_ID ? L"Konfirmasi Pengujian Model" : L"Confirm Model Test"),
+            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) {
+        free(selected_names);
+        return;
+    }
+
+    ModelWorkerParams *params = (ModelWorkerParams *)calloc(1, sizeof(*params));
+    if (!params) {
+        free(selected_names);
+        MessageBoxW(hWnd,
+            (i18n_get_language() == LANG_ID) ? L"Memori tidak cukup untuk memulai pengujian." : L"Not enough memory to start the model tests.",
+            (i18n_get_language() == LANG_ID) ? L"Kesalahan" : L"Error",
+            MB_OK | MB_ICONERROR);
+        return;
+    }
+    params->hWnd = hWnd;
+    params->selected_model_names = selected_names;
+    params->selected_model_count = test_count;
+    if (!get_app_database_path(params->database_path, MAX_PATH * 2)) {
+        free(params->selected_model_names);
+        free(params);
+        SetWindowTextW(g_hModelStatus, L"Could not locate kiosapi-models.db beside the application.");
+        return;
+    }
+    memcpy(params->api_key, g_kiosapiKey, g_kiosapiKeyLen + 1);
+
+    g_bModelCancel = false;
+    g_bModelTesting = true;
+    EnableWindow(g_hModelMaxInput, FALSE);
+    EnableWindow(g_hModelMaxOutput, FALSE);
+    EnableWindow(g_hModelBtnTest, FALSE);
+    EnableWindow(g_hModelBtnStop, TRUE);
+    SendMessageW(g_hModelProgress, PBM_SETRANGE32, 0, (LPARAM)test_count);
+    SendMessageW(g_hModelProgress, PBM_SETPOS, 0, 0);
+    SetWindowTextW(g_hModelStatus, i18n_get_language() == LANG_ID ? L"Memulai pengujian model..." : L"Starting model tests...");
+
+    g_hModelThread = CreateThread(NULL, 0, model_test_worker_thread, params, 0, NULL);
+    if (!g_hModelThread) {
+        free(params->selected_model_names);
+        SecureZeroMemory(params, sizeof(*params));
+        free(params);
+        g_bModelTesting = false;
+        EnableWindow(g_hModelMaxInput, TRUE);
+        EnableWindow(g_hModelMaxOutput, TRUE);
+        EnableWindow(g_hModelBtnStop, FALSE);
+        EnableWindow(g_hModelBtnTest, TRUE);
+        DWORD error = GetLastError();
+        wchar_t message[160];
+        swprintf(message, 160, L"Could not start model test worker (Windows error %lu).", (unsigned long)error);
+        SetWindowTextW(g_hModelStatus, message);
+    }
+}
+
+static void handle_model_context_menu(HWND hWnd, int screen_x, int screen_y, bool from_mouse) {
+    if (!g_hModelList) return;
+    POINT point = {screen_x, screen_y};
+    if (from_mouse) {
+        POINT client_point = point;
+        ScreenToClient(g_hModelList, &client_point);
+        LVHITTESTINFO hit = {0};
+        hit.pt = client_point;
+        int index = ListView_HitTest(g_hModelList, &hit);
+        if (index >= 0 && !(ListView_GetItemState(g_hModelList, index, LVIS_SELECTED) & LVIS_SELECTED)) {
+            ListView_SetItemState(g_hModelList, -1, 0, LVIS_SELECTED | LVIS_FOCUSED);
+            ListView_SetItemState(g_hModelList, index, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+        }
+    } else if (screen_x == -1 && screen_y == -1) {
+        int index = ListView_GetNextItem(g_hModelList, -1, LVNI_SELECTED);
+        if (index >= 0) {
+            RECT item_rect;
+            if (ListView_GetItemRect(g_hModelList, index, &item_rect, LVIR_BOUNDS)) {
+                point.x = item_rect.left;
+                point.y = item_rect.bottom;
+                ClientToScreen(g_hModelList, &point);
+            } else {
+                GetCursorPos(&point);
+            }
+        } else {
+            GetCursorPos(&point);
+        }
+    }
+
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return;
+    bool can_scan = g_bAuthenticated && g_bKiosapiKeyReady && !g_bModelTesting &&
+        ListView_GetSelectedCount(g_hModelList) > 0;
+    AppendMenuW(menu, MF_STRING | (can_scan ? 0 : MF_GRAYED), IDM_MODEL_SCAN_SELECTED,
+        i18n_get(STR_MODEL_SCAN_SELECTED));
+    AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
+    bool can_add_model = g_bAuthenticated && !g_bModelTesting &&
+        ListView_GetSelectedCount(g_hModelList) == 1;
+    AppendMenuW(menu, MF_STRING | (can_add_model ? 0 : MF_GRAYED), IDM_MODEL_ADD_TO_VSCODE,
+        i18n_get(STR_MODEL_ADD_TO_VSCODE));
+    SetForegroundWindow(hWnd);
+    int command = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD, point.x, point.y, 0, hWnd, NULL);
+    DestroyMenu(menu);
+    if (command == IDM_MODEL_SCAN_SELECTED) start_model_tests(hWnd, true);
+    else if (command == IDM_MODEL_ADD_TO_VSCODE) {
+        const char **selected_names = NULL;
+        size_t selected_count = get_model_names(&selected_names, true);
+        if (selected_count != 1 || !selected_names) {
+            free(selected_names);
+            MessageBoxW(hWnd, i18n_get(STR_MODEL_ADD_TO_VSCODE_SELECT_ONE),
+                i18n_get_language() == LANG_ID ? L"Pilih Satu Model" : L"Select One Model",
+                MB_OK | MB_ICONINFORMATION);
+            return;
+        }
+        char model_id[MODEL_TEST_NAME_CAPACITY] = {0};
+        snprintf(model_id, sizeof(model_id), "%s", selected_names[0]);
+        wchar_t model_name[MODEL_TEST_NAME_CAPACITY] = {0};
+        copy_utf8_to_wide(model_id, model_name, MODEL_TEST_NAME_CAPACITY);
+        free(selected_names);
+
+        wchar_t config_path[MAX_PATH * 4] = {0};
+        if (!get_vscode_model_config_path(config_path, MAX_PATH * 4)) {
+            MessageBoxW(hWnd, i18n_get(STR_MODEL_ADD_TO_VSCODE_PATH_ERROR),
+                i18n_get_language() == LANG_ID ? L"Kesalahan" : L"Error",
+                MB_OK | MB_ICONERROR);
+            return;
+        }
+        wchar_t confirmation[1024];
+        swprintf(confirmation, 1024, i18n_get(STR_MODEL_ADD_TO_VSCODE_CONFIRM),
+            model_name, config_path);
+        if (MessageBoxW(hWnd, confirmation,
+                i18n_get_language() == LANG_ID ? L"Tambahkan Model ke VS Code" : L"Add Model to VS Code",
+                MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) {
+            return;
+        }
+
+        char error[256] = {0};
+        VscodeModelConfigResult result = vscode_model_config_add(
+            config_path, model_id, error, sizeof(error));
+        if (result == VSCODE_MODEL_CONFIG_ADDED) {
+            wchar_t message[1024];
+            swprintf(message, 1024, i18n_get(STR_MODEL_ADD_TO_VSCODE_SUCCESS), model_name);
+            SetWindowTextW(g_hModelStatus, message);
+            MessageBoxW(hWnd, message,
+                i18n_get_language() == LANG_ID ? L"Model Ditambahkan" : L"Model Added",
+                MB_OK | MB_ICONINFORMATION);
+        } else if (result == VSCODE_MODEL_CONFIG_ALREADY_PRESENT) {
+            wchar_t message[512];
+            swprintf(message, 512, i18n_get(STR_MODEL_ADD_TO_VSCODE_EXISTS), model_name);
+            MessageBoxW(hWnd, message,
+                i18n_get_language() == LANG_ID ? L"Model Sudah Ada" : L"Model Already Exists",
+                MB_OK | MB_ICONINFORMATION);
+        } else {
+            wchar_t wide_error[256] = {0};
+            copy_utf8_to_wide(error, wide_error, 256);
+            wchar_t message[512];
+            swprintf(message, 512, i18n_get(STR_MODEL_ADD_TO_VSCODE_ERROR), wide_error);
+            MessageBoxW(hWnd, message,
+                i18n_get_language() == LANG_ID ? L"Kesalahan Konfigurasi VS Code" : L"VS Code Configuration Error",
+                MB_OK | MB_ICONERROR);
+        }
+    }
 }
 
 /* ========================================================================= */
@@ -2197,7 +3045,7 @@ static void restore_main_window(HWND hWnd) {
 
 static void app_exit_completely(HWND hWnd) {
     bool is_id = (i18n_get_language() == LANG_ID);
-    if (g_bIsWorking) {
+    if (g_bIsWorking || g_bModelTesting) {
         int res = MessageBoxW(hWnd,
             is_id ? L"Proses sedang berjalan. Apakah Anda yakin ingin membatalkan dan keluar sepenuhnya?" :
                     L"A process is currently running. Are you sure you want to cancel and exit completely?",
@@ -2205,6 +3053,17 @@ static void app_exit_completely(HWND hWnd) {
         if (res != IDYES) return;
         g_bCancelRequested = true;
         g_bDupCancel = true;
+        g_bModelCancel = true;
+        if (g_bModelTesting && g_hModelThread) {
+            WaitForSingleObject(g_hModelThread, INFINITE);
+            CloseHandle(g_hModelThread);
+            g_hModelThread = NULL;
+            g_bModelTesting = false;
+            MSG queued_message;
+            while (PeekMessageW(&queued_message, hWnd, WM_APP_MODEL_PROGRESS, WM_APP_MODEL_FINISHED, PM_REMOVE)) {
+                free((void *)queued_message.lParam);
+            }
+        }
     }
 
     if (g_bRememberFolder) {
@@ -2226,6 +3085,7 @@ static void app_exit_completely(HWND hWnd) {
     remove_main_tray_icon();
     clear_explorer_list_items(g_hEncExplorerList);
     tracker_encrypt_all_decrypted_files();
+    clear_kiosapi_key();
     vault_logout();
     DestroyWindow(hWnd);
 }
@@ -2348,9 +3208,11 @@ static DWORD WINAPI duplicate_worker_thread(LPVOID lpParam) {
     DupWorkerParams *params = (DupWorkerParams *)lpParam;
     if (!params) return 0;
 
-    DuplicateResults *results = duplicate_find(
+    DuplicateResults *results = duplicate_find_filtered(
         params->folder,
         params->recursive,
+        params->file_type_filter,
+        params->max_file_size_bytes,
         duplicate_progress_callback,
         (void *)params->hWnd,
         &g_bDupCancel
@@ -2383,6 +3245,9 @@ static void start_duplicate_scan(HWND hWnd) {
     }
 
     bool recursive = (SendMessage(g_hDupChkRecursive, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    ScannerFileType file_type_filter = SCANNER_FILE_TYPE_ALL;
+    uint64_t max_file_size_bytes = 0;
+    if (!read_file_filters(hWnd, g_hDupFileType, g_hDupMaxSizeEdit, &file_type_filter, &max_file_size_bytes)) return;
 
     if (g_pDupResults) {
         duplicate_free_results(g_pDupResults);
@@ -2415,8 +3280,17 @@ static void start_duplicate_scan(HWND hWnd) {
     wcsncpy(params->folder, folder, MAX_PATH * 2 - 1);
     params->folder[MAX_PATH * 2 - 1] = L'\0';
     params->recursive = recursive;
+    params->file_type_filter = file_type_filter;
+    params->max_file_size_bytes = max_file_size_bytes;
 
     g_hDupWorkerThread = CreateThread(NULL, 0, duplicate_worker_thread, (LPVOID)params, 0, NULL);
+    if (!g_hDupWorkerThread) {
+        free(params);
+        g_bIsWorking = false;
+        EnableWindow(g_hDupBtnScan, TRUE);
+        EnableWindow(g_hDupBtnStop, FALSE);
+        SetWindowTextW(g_hDupStaticStatus, L"Could not start duplicate scan worker.");
+    }
 }
 
 static void delete_selected_duplicates(HWND hWnd) {
@@ -2666,6 +3540,9 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             tie.pszText = (LPWSTR)i18n_get(STR_TAB_DUPLICATES);
             TabCtrl_InsertItem(g_hTab, 2, &tie);
 
+            tie.pszText = (LPWSTR)i18n_get(STR_TAB_MODEL_TESTER);
+            TabCtrl_InsertItem(g_hTab, 3, &tie);
+
             /* ================= VIEW 1A: SETUP / ONBOARDING ================= */
             g_hSetupGrp = CreateWindowExW(0, L"BUTTON", L" 🛡️ Pengaturan Keamanan Master & Email Pemulihan (Wajib) ",
                 WS_CHILD | BS_GROUPBOX, 0, 0, 500, 380, hWnd, (HMENU)IDC_SETUP_GRP, NULL, NULL);
@@ -2788,6 +3665,44 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             SendMessage(g_hChkRemember1, BM_SETCHECK, g_bRememberFolder ? BST_CHECKED : BST_UNCHECKED, 0);
             register_ctrl(g_hExplorerCtrls, &g_nExplorerCtrls, 32, g_hChkRemember1);
 
+            g_hEncFileTypeLabel = CreateWindowExW(0, L"STATIC", i18n_get(STR_ENC_FILE_TYPE_LABEL),
+                WS_CHILD, 0, 0, 65, 22, hWnd, (HMENU)IDC_ENC_TYPE_LABEL, NULL, NULL);
+            set_font(g_hEncFileTypeLabel, g_hFontBold);
+            register_ctrl(g_hExplorerCtrls, &g_nExplorerCtrls, 32, g_hEncFileTypeLabel);
+
+            g_hEncFileType = CreateWindowExW(0, L"COMBOBOX", L"",
+                WS_CHILD | CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 0, 0, 140, 120,
+                hWnd, (HMENU)IDC_ENC_FILE_TYPE, NULL, NULL);
+            set_font(g_hEncFileType, g_hFont);
+            SendMessageW(g_hEncFileType, CB_ADDSTRING, 0, (LPARAM)i18n_get(STR_ENC_FILE_TYPE_ALL));
+            SendMessageW(g_hEncFileType, CB_ADDSTRING, 0, (LPARAM)i18n_get(STR_ENC_FILE_TYPE_DOCUMENTS));
+            SendMessageW(g_hEncFileType, CB_ADDSTRING, 0, (LPARAM)i18n_get(STR_ENC_FILE_TYPE_IMAGES));
+            SendMessageW(g_hEncFileType, CB_ADDSTRING, 0, (LPARAM)i18n_get(STR_ENC_FILE_TYPE_VIDEOS));
+            SendMessageW(g_hEncFileType, CB_SETCURSEL, 0, 0);
+            register_ctrl(g_hExplorerCtrls, &g_nExplorerCtrls, 32, g_hEncFileType);
+
+            g_hEncFileExtensions = CreateWindowExW(0, L"STATIC", i18n_get(STR_ENC_EXT_ALL),
+                WS_CHILD | SS_LEFT, 0, 0, 385, 22, hWnd, (HMENU)IDC_ENC_EXTENSIONS, NULL, NULL);
+            set_font(g_hEncFileExtensions, g_hFont);
+            register_ctrl(g_hExplorerCtrls, &g_nExplorerCtrls, 32, g_hEncFileExtensions);
+
+            g_hEncMaxSizeLabel = CreateWindowExW(0, L"STATIC", i18n_get(STR_ENC_MAX_SIZE_LABEL),
+                WS_CHILD, 0, 0, 122, 22, hWnd, (HMENU)IDC_ENC_MAX_SIZE_LABEL, NULL, NULL);
+            set_font(g_hEncMaxSizeLabel, g_hFontBold);
+            register_ctrl(g_hExplorerCtrls, &g_nExplorerCtrls, 32, g_hEncMaxSizeLabel);
+
+            g_hEncMaxSizeEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"0",
+                WS_CHILD | ES_NUMBER | ES_AUTOHSCROLL | WS_TABSTOP, 0, 0, 58, 24,
+                hWnd, (HMENU)IDC_ENC_MAX_SIZE, NULL, NULL);
+            set_font(g_hEncMaxSizeEdit, g_hFont);
+            register_ctrl(g_hExplorerCtrls, &g_nExplorerCtrls, 32, g_hEncMaxSizeEdit);
+
+            g_hEncMaxSizeUnit = CreateWindowExW(0, L"STATIC", i18n_get(STR_ENC_MAX_SIZE_UNIT),
+                WS_CHILD, 0, 0, 75, 22, hWnd, (HMENU)IDC_ENC_MAX_SIZE_UNIT, NULL, NULL);
+            set_font(g_hEncMaxSizeUnit, g_hFont);
+            register_ctrl(g_hExplorerCtrls, &g_nExplorerCtrls, 32, g_hEncMaxSizeUnit);
+            update_file_filter_extensions(g_hEncFileType, g_hEncFileExtensions);
+
             /* TreeView (Directory Sidebar) */
             g_hEncTree = CreateWindowExW(
                 WS_EX_CLIENTEDGE, WC_TREEVIEWW, L"",
@@ -2883,6 +3798,15 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             set_font(g_hRenChkRemember2, g_hFont);
             SendMessage(g_hRenChkRemember2, BM_SETCHECK, g_bRememberFolder ? BST_CHECKED : BST_UNCHECKED, 0);
             register_ctrl(g_hRenCtrls, &g_nRenCtrls, 64, g_hRenChkRemember2);
+
+            create_file_filter_controls(
+                hWnd,
+                IDC_REN_FILE_TYPE_LABEL, IDC_REN_FILE_TYPE, IDC_REN_EXTENSIONS,
+                IDC_REN_MAX_SIZE_LABEL, IDC_REN_MAX_SIZE, IDC_REN_MAX_SIZE_UNIT,
+                &g_hRenFileTypeLabel, &g_hRenFileType, &g_hRenFileExtensions,
+                &g_hRenMaxSizeLabel, &g_hRenMaxSizeEdit, &g_hRenMaxSizeUnit,
+                g_hRenCtrls, &g_nRenCtrls, 64
+            );
 
             g_hRenGrp2 = CreateWindowExW(0, L"BUTTON", L" 2. Metode & Aturan Penamaan Baru (Advanced Renamer Style) ",
                 WS_CHILD | BS_GROUPBOX, 0, 0, 700, 75, hWnd, (HMENU)IDC_REN_GRP_METHOD, NULL, NULL);
@@ -3028,6 +3952,15 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             set_font(g_hDupBtnScan, g_hFontBold);
             register_ctrl(g_hDupCtrls, &g_nDupCtrls, 32, g_hDupBtnScan);
 
+            create_file_filter_controls(
+                hWnd,
+                IDC_DUP_FILE_TYPE_LABEL, IDC_DUP_FILE_TYPE, IDC_DUP_EXTENSIONS,
+                IDC_DUP_MAX_SIZE_LABEL, IDC_DUP_MAX_SIZE, IDC_DUP_MAX_SIZE_UNIT,
+                &g_hDupFileTypeLabel, &g_hDupFileType, &g_hDupFileExtensions,
+                &g_hDupMaxSizeLabel, &g_hDupMaxSizeEdit, &g_hDupMaxSizeUnit,
+                g_hDupCtrls, &g_nDupCtrls, 32
+            );
+
             g_hDupList = CreateWindowExW(
                 WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
                 WS_CHILD | WS_BORDER | WS_TABSTOP | LVS_REPORT | LVS_SHOWSELALWAYS,
@@ -3080,6 +4013,77 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             EnableWindow(g_hDupBtnStop, FALSE);
             register_ctrl(g_hDupCtrls, &g_nDupCtrls, 32, g_hDupBtnStop);
 
+            /* ================= PAGE 4: PASSWORD-PROTECTED MODEL TESTER ================= */
+            g_hModelLockInfo = CreateWindowExW(0, L"STATIC", i18n_get(STR_MODEL_LOCKED),
+                WS_CHILD | SS_CENTER, 0, 0, 500, 45, hWnd, (HMENU)IDC_MODEL_LOCK_INFO, NULL, NULL);
+            set_font(g_hModelLockInfo, g_hFontTitle);
+            register_ctrl(g_hModelLockCtrls, &g_nModelLockCtrls, 2, g_hModelLockInfo);
+
+            g_hModelLockLogin = CreateWindowExW(0, L"BUTTON",
+                i18n_get(STR_LOGIN_BTN_MASUK),
+                WS_CHILD | BS_DEFPUSHBUTTON | WS_TABSTOP, 0, 0, 220, 36, hWnd, (HMENU)IDC_MODEL_LOCK_LOGIN, NULL, NULL);
+            set_font(g_hModelLockLogin, g_hFontBold);
+            register_ctrl(g_hModelLockCtrls, &g_nModelLockCtrls, 2, g_hModelLockLogin);
+
+            g_hModelBtnTest = CreateWindowExW(0, L"BUTTON", i18n_get(STR_MODEL_BTN_TEST),
+                WS_CHILD | BS_DEFPUSHBUTTON | WS_TABSTOP, 0, 0, 160, 30, hWnd, (HMENU)IDC_MODEL_BTN_TEST, NULL, NULL);
+            set_font(g_hModelBtnTest, g_hFontBold);
+            register_ctrl(g_hModelCtrls, &g_nModelCtrls, 10, g_hModelBtnTest);
+
+            g_hModelBtnStop = CreateWindowExW(0, L"BUTTON", i18n_get(STR_MODEL_BTN_STOP),
+                WS_CHILD | BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 100, 30, hWnd, (HMENU)IDC_MODEL_BTN_STOP, NULL, NULL);
+            set_font(g_hModelBtnStop, g_hFont);
+            EnableWindow(g_hModelBtnStop, FALSE);
+            register_ctrl(g_hModelCtrls, &g_nModelCtrls, 10, g_hModelBtnStop);
+
+            g_hModelMaxInputLabel = CreateWindowExW(0, L"STATIC", i18n_get(STR_MODEL_MAX_INPUT_PRICE),
+                WS_CHILD, 0, 0, 90, 22, hWnd, (HMENU)IDC_MODEL_MAX_INPUT_LABEL, NULL, NULL);
+            set_font(g_hModelMaxInputLabel, g_hFontBold);
+            register_ctrl(g_hModelCtrls, &g_nModelCtrls, 10, g_hModelMaxInputLabel);
+
+            g_hModelMaxInput = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                WS_CHILD | ES_AUTOHSCROLL | WS_TABSTOP, 0, 0, 82, 24,
+                hWnd, (HMENU)IDC_MODEL_MAX_INPUT, NULL, NULL);
+            set_font(g_hModelMaxInput, g_hFont);
+            register_ctrl(g_hModelCtrls, &g_nModelCtrls, 10, g_hModelMaxInput);
+
+            g_hModelMaxOutputLabel = CreateWindowExW(0, L"STATIC", i18n_get(STR_MODEL_MAX_OUTPUT_PRICE),
+                WS_CHILD, 0, 0, 100, 22, hWnd, (HMENU)IDC_MODEL_MAX_OUTPUT_LABEL, NULL, NULL);
+            set_font(g_hModelMaxOutputLabel, g_hFontBold);
+            register_ctrl(g_hModelCtrls, &g_nModelCtrls, 10, g_hModelMaxOutputLabel);
+
+            g_hModelMaxOutput = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                WS_CHILD | ES_AUTOHSCROLL | WS_TABSTOP, 0, 0, 82, 24,
+                hWnd, (HMENU)IDC_MODEL_MAX_OUTPUT, NULL, NULL);
+            set_font(g_hModelMaxOutput, g_hFont);
+            register_ctrl(g_hModelCtrls, &g_nModelCtrls, 10, g_hModelMaxOutput);
+
+            g_hModelStatus = CreateWindowExW(0, L"STATIC", i18n_get(STR_MODEL_STATUS_READY),
+                WS_CHILD, 0, 0, 700, 22, hWnd, (HMENU)IDC_MODEL_STATUS, NULL, NULL);
+            set_font(g_hModelStatus, g_hFont);
+            register_ctrl(g_hModelCtrls, &g_nModelCtrls, 10, g_hModelStatus);
+
+            g_hModelProgress = CreateWindowExW(0, PROGRESS_CLASSW, NULL,
+                WS_CHILD | PBS_SMOOTH, 0, 0, 700, 16, hWnd, (HMENU)IDC_MODEL_PROGRESS, NULL, NULL);
+            register_ctrl(g_hModelCtrls, &g_nModelCtrls, 10, g_hModelProgress);
+
+            g_hModelList = CreateWindowExW(
+                WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
+                WS_CHILD | WS_BORDER | WS_TABSTOP | LVS_REPORT | LVS_SHOWSELALWAYS,
+                0, 0, 700, 400, hWnd, (HMENU)IDC_MODEL_LIST, NULL, NULL
+            );
+            set_font(g_hModelList, g_hFont);
+            ListView_SetExtendedListViewStyle(g_hModelList, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
+            register_ctrl(g_hModelCtrls, &g_nModelCtrls, 10, g_hModelList);
+            LVCOLUMNW mc = {0};
+            mc.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
+            mc.cx = 190; mc.pszText = (LPWSTR)i18n_get(STR_MODEL_COL_NAME); ListView_InsertColumn(g_hModelList, 0, &mc);
+            mc.cx = 120; mc.pszText = (LPWSTR)i18n_get(STR_MODEL_COL_PROVIDER); ListView_InsertColumn(g_hModelList, 1, &mc);
+            mc.cx = 100; mc.pszText = (LPWSTR)i18n_get(STR_MODEL_COL_UPTIME); ListView_InsertColumn(g_hModelList, 2, &mc);
+            mc.cx = 115; mc.pszText = (LPWSTR)i18n_get(STR_MODEL_COL_OUTPUT); ListView_InsertColumn(g_hModelList, 3, &mc);
+            mc.cx = 110; mc.pszText = (LPWSTR)i18n_get(STR_MODEL_COL_INPUT); ListView_InsertColumn(g_hModelList, 4, &mc);
+            mc.cx = 105; mc.pszText = (LPWSTR)i18n_get(STR_MODEL_COL_LATENCY); ListView_InsertColumn(g_hModelList, 5, &mc);
+            mc.cx = 130; mc.pszText = (LPWSTR)i18n_get(STR_MODEL_COL_RESULT); ListView_InsertColumn(g_hModelList, 6, &mc);
             /* Initialize localized texts & show initial page */
             update_ui_texts(hWnd);
             show_page(0);
@@ -3204,6 +4208,36 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                     }
                     return 0;
                 }
+            } else if (lpnm->hwndFrom == g_hModelList) {
+                if (lpnm->code == LVN_COLUMNCLICK && g_bAuthenticated) {
+                    NMLISTVIEW *nmlv = (NMLISTVIEW *)lParam;
+                    ModelSortColumn selected;
+                    bool default_descending;
+                    if (nmlv->iSubItem == 2) {
+                        selected = MODEL_SORT_UPTIME;
+                        default_descending = true;
+                    } else if (nmlv->iSubItem == 3) {
+                        selected = MODEL_SORT_OUTPUT_PRICE;
+                        default_descending = false;
+                    } else if (nmlv->iSubItem == 4) {
+                        selected = MODEL_SORT_INPUT_PRICE;
+                        default_descending = false;
+                    } else {
+                        break;
+                    }
+                    if (g_modelSortColumn == selected) {
+                        g_modelSortDescending = !g_modelSortDescending;
+                    } else {
+                        g_modelSortColumn = selected;
+                        g_modelSortDescending = default_descending;
+                    }
+                    refresh_model_listview();
+                } else if (lpnm->code == NM_RCLICK) {
+                    POINT pt;
+                    GetCursorPos(&pt);
+                    handle_model_context_menu(hWnd, pt.x, pt.y, true);
+                    return 0;
+                }
             }
             break;
         }
@@ -3215,6 +4249,10 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                 return 0;
             } else if (hTarget == g_hDupList) {
                 handle_duplicate_context_menu(hWnd, (short)LOWORD(lParam), (short)HIWORD(lParam));
+                return 0;
+            } else if (hTarget == g_hModelList &&
+                       (short)LOWORD(lParam) == -1 && (short)HIWORD(lParam) == -1) {
+                handle_model_context_menu(hWnd, -1, -1, false);
                 return 0;
             }
             break;
@@ -3245,6 +4283,9 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             } else if (wmId == IDM_VIEW_DUPLICATES) {
                 TabCtrl_SetCurSel(g_hTab, 2);
                 show_page(2);
+            } else if (wmId == IDM_VIEW_MODEL_TESTER) {
+                TabCtrl_SetCurSel(g_hTab, 3);
+                show_page(3);
             } else if (wmId == IDM_LANG_EN) {
                 if (i18n_get_language() != LANG_EN) {
                     i18n_set_language(LANG_EN);
@@ -3304,6 +4345,10 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                 }
 
                 if (vault_setup(p1, email)) {
+                    unlock_kiosapi_key(p1);
+                    SecureZeroMemory(p1, sizeof(p1));
+                    SecureZeroMemory(p2, sizeof(p2));
+                    SecureZeroMemory(email, sizeof(email));
                     /* Automatically register explorer integration & start service */
                     service_install();
                     MessageBoxW(hWnd, i18n_get(STR_SETUP_SUCCESS),
@@ -3329,6 +4374,7 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
                 int rem = 0;
                 AuthResult res = vault_authenticate(pass, &rem);
+                if (res == AUTH_SUCCESS) unlock_kiosapi_key(pass);
                 SecureZeroMemory(pass, sizeof(pass));
 
                 if (res == AUTH_SUCCESS) {
@@ -3354,6 +4400,16 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             }
 
             /* Authenticated Explorer Actions */
+            else if (wmId == IDC_ENC_FILE_TYPE && wmEvent == CBN_SELCHANGE) {
+                update_file_filter_extensions(g_hEncFileType, g_hEncFileExtensions);
+            } else if (wmId == IDC_REN_FILE_TYPE && wmEvent == CBN_SELCHANGE) {
+                update_file_filter_extensions(g_hRenFileType, g_hRenFileExtensions);
+                scan_renamer_folder(hWnd);
+            } else if (wmId == IDC_DUP_FILE_TYPE && wmEvent == CBN_SELCHANGE) {
+                update_file_filter_extensions(g_hDupFileType, g_hDupFileExtensions);
+            } else if (wmId == IDC_REN_MAX_SIZE && wmEvent == EN_KILLFOCUS) {
+                scan_renamer_folder(hWnd);
+            }
             else if (wmId == IDC_BTN_BROWSE && wmEvent == BN_CLICKED) {
                 browse_folder_to_edit(hWnd, g_hEditFolder);
             } else if (wmId == IDC_CHK_REMEMBER && wmEvent == BN_CLICKED) {
@@ -3435,6 +4491,20 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                 }
             } else if (wmId == IDC_DUP_BTN_DELETE && wmEvent == BN_CLICKED) {
                 delete_selected_duplicates(hWnd);
+            } else if (wmId == IDC_MODEL_LOCK_LOGIN && wmEvent == BN_CLICKED) {
+                TabCtrl_SetCurSel(g_hTab, 0);
+                show_page(0);
+            } else if ((wmId == IDC_MODEL_MAX_INPUT || wmId == IDC_MODEL_MAX_OUTPUT) &&
+                       wmEvent == EN_CHANGE) {
+                refresh_model_listview();
+            } else if (wmId == IDC_MODEL_BTN_TEST && wmEvent == BN_CLICKED) {
+                start_model_tests(hWnd, false);
+            } else if (wmId == IDC_MODEL_BTN_STOP && wmEvent == BN_CLICKED) {
+                g_bModelCancel = true;
+                EnableWindow(g_hModelBtnStop, FALSE);
+                SetWindowTextW(g_hModelStatus,
+                    i18n_get_language() == LANG_ID ? L"Menyelesaikan permintaan saat ini lalu menghentikan pengujian..." :
+                                                   L"Finishing the current request, then stopping...");
             }
             break;
         }
@@ -3445,6 +4515,72 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                 append_log(g_hLogBox, msg);
                 free(msg);
             }
+            break;
+        }
+
+        case WM_APP_MODEL_PROGRESS: {
+            ModelProgressPayload *payload = (ModelProgressPayload *)lParam;
+            if (payload) {
+                SendMessageW(g_hModelProgress, PBM_SETPOS, payload->completed, 0);
+                wchar_t status[384];
+                swprintf(
+                    status,
+                    384,
+                    L"%ls (%d/%d): %ls",
+                    payload->model_name,
+                    payload->completed,
+                    payload->total,
+                    payload->result
+                );
+                SetWindowTextW(g_hModelStatus, status);
+                free(payload);
+            }
+            break;
+        }
+
+        case WM_APP_MODEL_FINISHED: {
+            ModelFinishedPayload *payload = (ModelFinishedPayload *)lParam;
+            g_bModelTesting = false;
+            if (g_hModelThread) {
+                CloseHandle(g_hModelThread);
+                g_hModelThread = NULL;
+            }
+            EnableWindow(g_hModelBtnStop, FALSE);
+            EnableWindow(g_hModelMaxInput, TRUE);
+            EnableWindow(g_hModelMaxOutput, TRUE);
+            refresh_model_listview();
+
+            wchar_t status[512];
+            if (!payload) {
+                wcscpy(status, L"Model test worker could not allocate a result.");
+            } else if (!payload->success) {
+                swprintf(status, 512, L"Model test stopped: %ls", payload->error);
+            } else if (payload->cancelled) {
+                swprintf(
+                    status,
+                    512,
+                    i18n_get_language() == LANG_ID
+                        ? L"Pengujian dibatalkan. Selesai: %d | Berhasil: %d | Gagal: %d"
+                        : L"Test cancelled. Completed: %d | Passed: %d | Failed: %d",
+                    payload->completed,
+                    payload->succeeded,
+                    payload->failed
+                );
+            } else {
+                swprintf(
+                    status,
+                    512,
+                    i18n_get_language() == LANG_ID
+                        ? L"Pengujian selesai. Total: %d | Berhasil: %d | Gagal: %d"
+                        : L"Test complete. Total: %d | Passed: %d | Failed: %d",
+                    payload->completed,
+                    payload->succeeded,
+                    payload->failed
+                );
+            }
+            SetWindowTextW(g_hModelStatus, status);
+            EnableWindow(g_hModelBtnTest, g_bAuthenticated && g_bKiosapiKeyReady && g_modelVisibleCount > 0);
+            free(payload);
             break;
         }
 
@@ -3692,6 +4828,8 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         case WM_DESTROY: {
             KillTimer(hWnd, TIMER_AUTO_ENCRYPT_ID);
             remove_main_tray_icon();
+            g_bModelCancel = true;
+            clear_kiosapi_key();
             clear_explorer_list_items(g_hEncExplorerList);
             tracker_encrypt_all_decrypted_files();
             if (g_pDupResults) {

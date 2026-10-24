@@ -14,6 +14,13 @@ typedef struct {
     uint64_t total_bytes;
 } FileList;
 
+typedef enum {
+    SCANNER_FILE_TYPE_ALL = 0,
+    SCANNER_FILE_TYPE_DOCUMENTS,
+    SCANNER_FILE_TYPE_IMAGES,
+    SCANNER_FILE_TYPE_VIDEOS
+} ScannerFileType;
+
 /* Create an empty FileList container */
 FileList* scanner_create(void);
 
@@ -29,6 +36,16 @@ bool scanner_scan(
     bool recursive,
     OperationMode mode,
     FileList *out_list
+);
+
+/* Remove files outside the selected type and size limits; returns the skipped count. */
+size_t scanner_filter_files(FileList *list, ScannerFileType file_type, uint64_t max_file_size_bytes);
+
+bool scanner_file_matches_filter(
+    const wchar_t *path,
+    uint64_t file_size_bytes,
+    ScannerFileType file_type,
+    uint64_t max_file_size_bytes
 );
 
 #ifdef __cplusplus

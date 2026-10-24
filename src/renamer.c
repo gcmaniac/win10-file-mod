@@ -60,7 +60,13 @@ bool renamer_add_item(RenameItemList *list, const wchar_t *full_path, uint64_t s
     return true;
 }
 
-static void scan_recursive_renamer(RenameItemList *list, const wchar_t *dir_path, bool recursive) {
+static void scan_recursive_renamer(
+    RenameItemList *list,
+    const wchar_t *dir_path,
+    bool recursive,
+    ScannerFileType file_type,
+    uint64_t max_file_size_bytes
+) {
     wchar_t clean_dir[MAX_PATH * 2];
     const wchar_t *start = dir_path;
     while (*start == L' ' || *start == L'\t' || *start == L'\"') start++;
@@ -90,7 +96,7 @@ static void scan_recursive_renamer(RenameItemList *list, const wchar_t *dir_path
 
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             if (recursive) {
-                scan_recursive_renamer(list, item_path, recursive);
+                scan_recursive_renamer(list, item_path, recursive, file_type, max_file_size_bytes);
             }
         } else {
             /* Ignore desktop.ini, thumbs.db */
@@ -99,7 +105,9 @@ static void scan_recursive_renamer(RenameItemList *list, const wchar_t *dir_path
             ULARGE_INTEGER sz;
             sz.LowPart = fd.nFileSizeLow;
             sz.HighPart = fd.nFileSizeHigh;
-            renamer_add_item(list, item_path, sz.QuadPart);
+            if (scanner_file_matches_filter(item_path, sz.QuadPart, file_type, max_file_size_bytes)) {
+                renamer_add_item(list, item_path, sz.QuadPart);
+            }
         }
     } while (FindNextFileW(hFind, &fd));
 
@@ -107,9 +115,19 @@ static void scan_recursive_renamer(RenameItemList *list, const wchar_t *dir_path
 }
 
 bool renamer_scan_folder(RenameItemList *list, const wchar_t *root_dir, bool recursive) {
+    return renamer_scan_folder_filtered(list, root_dir, recursive, SCANNER_FILE_TYPE_ALL, 0);
+}
+
+bool renamer_scan_folder_filtered(
+    RenameItemList *list,
+    const wchar_t *root_dir,
+    bool recursive,
+    ScannerFileType file_type,
+    uint64_t max_file_size_bytes
+) {
     if (!list || !root_dir) return false;
     renamer_clear_list(list);
-    scan_recursive_renamer(list, root_dir, recursive);
+    scan_recursive_renamer(list, root_dir, recursive, file_type, max_file_size_bytes);
     return true;
 }
 

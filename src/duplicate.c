@@ -125,6 +125,8 @@ static bool compute_file_sha256(
 static void scan_directory_recursive(
     const wchar_t *dir,
     bool recursive,
+    ScannerFileType file_type,
+    uint64_t max_file_size_bytes,
     ScannedFile **pFiles,
     size_t *pCount,
     size_t *pCap,
@@ -154,7 +156,7 @@ static void scan_directory_recursive(
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             if (recursive) {
                 scan_directory_recursive(
-                    full_path, recursive, pFiles, pCount, pCap, cb, user_data, cancel_flag
+                    full_path, recursive, file_type, max_file_size_bytes, pFiles, pCount, pCap, cb, user_data, cancel_flag
                 );
             }
         } else {
@@ -171,6 +173,7 @@ static void scan_directory_recursive(
             ULARGE_INTEGER uli;
             uli.LowPart = fd.nFileSizeLow;
             uli.HighPart = fd.nFileSizeHigh;
+            if (!scanner_file_matches_filter(full_path, uli.QuadPart, file_type, max_file_size_bytes)) continue;
 
             /* Expand capacity if necessary */
             if (*pCount >= *pCap) {
@@ -206,6 +209,20 @@ DuplicateResults* duplicate_find(
     void *user_data,
     volatile bool *cancel_flag
 ) {
+    return duplicate_find_filtered(
+        folder_path, recursive, SCANNER_FILE_TYPE_ALL, 0, cb, user_data, cancel_flag
+    );
+}
+
+DuplicateResults* duplicate_find_filtered(
+    const wchar_t *folder_path,
+    bool recursive,
+    ScannerFileType file_type,
+    uint64_t max_file_size_bytes,
+    DuplicateProgressCallback cb,
+    void *user_data,
+    volatile bool *cancel_flag
+) {
     if (!folder_path || folder_path[0] == L'\0') return NULL;
 
     DuplicateResults *results = (DuplicateResults *)calloc(1, sizeof(DuplicateResults));
@@ -231,7 +248,8 @@ DuplicateResults* duplicate_find(
     }
 
     /* Phase 1: Scan filesystem */
-    scan_directory_recursive(clean_dir, recursive, &files, &file_count, &file_cap, cb, user_data, cancel_flag);
+    scan_directory_recursive(clean_dir, recursive, file_type, max_file_size_bytes,
+        &files, &file_count, &file_cap, cb, user_data, cancel_flag);
     results->total_scanned_files = file_count;
 
     if (cb) {

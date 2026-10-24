@@ -86,6 +86,18 @@ int wmain(void) {
     uint8_t correct_key[KEY_SIZE_AES256];
     assert(crypto_derive_key(email, hdr.salt, sizeof(hdr.salt), correct_key) == true);
 
+    uint8_t memory_plaintext[256] = {0};
+    size_t memory_plaintext_len = 0;
+    assert(crypto_decrypt_file_to_memory(test_enc, correct_key, memory_plaintext, sizeof(memory_plaintext), &memory_plaintext_len) == true);
+    assert(memory_plaintext_len == strlen(sample_data));
+    assert(memcmp(memory_plaintext, sample_data, memory_plaintext_len) == 0);
+    SecureZeroMemory(memory_plaintext, sizeof(memory_plaintext));
+    memset(memory_plaintext, 0xA5, sizeof(memory_plaintext));
+    assert(crypto_decrypt_file_to_memory(test_enc, wrong_email_key, memory_plaintext, sizeof(memory_plaintext), &memory_plaintext_len) == false);
+    assert(memory_plaintext_len == 0);
+    for (size_t i = 0; i < sizeof(memory_plaintext); i++) assert(memory_plaintext[i] == 0);
+    wprintf(L"[PASS] In-memory decryption verifies AES-GCM and rejects an incorrect key.\n");
+
     bool dec_ok = crypto_decrypt_file(test_enc, NULL, correct_key, out_path, MAX_PATH, NULL, NULL, NULL);
     assert(dec_ok == true);
     wprintf(L"[PASS] Decryption with correct email succeeded: %ls\n", out_path);

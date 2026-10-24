@@ -46,6 +46,7 @@ Everything compiles to a standalone, zero-dependency executable linking directly
 - **Two-Pane Explorer Navigation**: Directory treeview on the left and detailed file listview on the right.
 - **Safe Directory Browsing**: Clicking folders only inspects contents without triggering batch actions.
 - **Multi-Selection Support**: Select multiple items with `Ctrl+Click`, `Shift+Click`, or `Ctrl+A`.
+- **Encryption Filters**: Choose all files, documents, images, or videos; the UI lists supported extensions and lets you cap the maximum encrypted file size (`0` means unlimited).
 - **Context Menu Actions**: Right-click selected items to invoke **"Encrypt Selected Files"** or **"Decrypt Selected Files"**.
 - **Bidirectional Column Sorting**: Click any column header (*Name*, *Type*, *Size*, *Status*, *Path*) with native visual ascending/descending arrows (`HDF_SORTUP` / `HDF_SORTDOWN`).
 - **Real-Time Encryption Status**: Plainly displays whether files are **[Decrypted]** or **[Encrypted]**.
@@ -79,10 +80,12 @@ Everything compiles to a standalone, zero-dependency executable linking directly
   - **Case Conversion**: Lowercase, UPPERCASE, and Title Case.
   - **Trim**: Character count stripping and whitespace normalization.
 - **Real-Time Live Preview**: The *"New File Name"* column updates synchronously as you type.
+- **File Type & Maximum-Size Filters**: Limit folder scans to all files, documents, images, or videos and optionally skip files above a MiB limit.
 - **Collision Detection**: Pre-execution collision scanning warns against duplicate or conflicting file names.
 - **Multi-Step Undo**: One-click rollback restores the previous file names using the undo stack.
 
 ### 9. 🔍 Duplicate File Finder
+- **File Type & Maximum-Size Filters**: Restrict duplicate scans by category and extensions, with an optional maximum file size.
 - **Fast & 100% Accurate 2-Tier Engine**:
   - **Tier 1 (Rapid Size Grouping)**: Traverses directory (with recursive subfolder toggle) and groups files by file size. Files with unique sizes are skipped immediately without disk reads, drastically reducing I/O operations.
   - **Tier 2 (SHA-256 Content Verification)**: Files sharing identical sizes are hashed and verified byte-for-byte using cryptographic **SHA-256** (via Windows CNG `bcrypt.dll`). Only files with 100% identical hashes are clustered into duplicate groups.
@@ -90,6 +93,13 @@ Everything compiles to a standalone, zero-dependency executable linking directly
 - **Auto-Select Copies**: One-click intelligence button that checks all duplicate copies while safely preserving one original file per group.
 - **Safe Recycling via Windows Recycle Bin**: Moves checked duplicate copies to the Recycle Bin using `SHFileOperationW` (`FOF_ALLOWUNDO`) so they can be restored if needed, accompanied by confirmation dialog showing exact disk space saved.
 - **Full Right-Click Context Menu**: Open file, show & highlight file in Windows Explorer, toggle checks, or delete individual files.
+
+### 10. 🧪 KiosAPI Model Tester
+- **Master Password-Protected API Key**: The application encrypts `kiosapi-key.txt` to `kiosapi-key.wkey` after successful setup/login and uses the key in memory for the authenticated session.
+- **SQLite Model Catalog**: `kiosapi-models.db` supplies the model list and per-million-token input/output prices.
+- **Measured Availability and Sorting**: Run confirmed sequential probes and sort by locally observed success ratio or price. Availability is not an official provider uptime/SLA; requests may incur API charges.
+- **Multi-Select Scanning**: Select model rows with Ctrl/Shift and use the right-click **Scan Selected** command to probe only those models.
+- **Price Filters and VS Code Integration**: Filter by maximum input/output price per 1M tokens (blank means unlimited); test-all respects the visible filtered list. Right-click a single model to add it to the existing KiosAPI All provider in the VS Code model config, with duplicate detection and a timestamped backup.
 
 ---
 
@@ -112,6 +122,8 @@ win10-file-mod/
 ├── include/                        # C header declarations
 │   ├── common.h                    # Core constants and shared structures
 │   ├── crypto.h                    # CNG AES-256-GCM and PBKDF2 API
+│   ├── kiosapi_key.h               # Encrypted KiosAPI key storage API
+│   ├── model_tester.h              # SQLite catalog and model probe API
 │   ├── duplicate.h                 # SHA-256 duplicate finder engine & Recycle Bin API
 │   ├── i18n.h                      # Multi-language string tables and API
 │   ├── renamer.h                   # Renamer structures, collision detection, and undo
@@ -123,6 +135,8 @@ win10-file-mod/
 │
 ├── src/                            # C implementation files
 │   ├── crypto.c                    # CNG BCrypt encryption, decryption, and CSPRNG
+│   ├── kiosapi_key.c               # Master Password-protected API key loading
+│   ├── model_tester.c              # SQLite model loading and WinHTTP probes
 │   ├── duplicate.c                 # 2-tier duplicate finder engine (sizing + SHA-256)
 │   ├── i18n.c                      # Localized string lookup tables
 │   ├── main.c                      # WinMain entry point, CLI parser, and single instance
@@ -139,10 +153,12 @@ win10-file-mod/
 │   ├── test_duplicate.c            # Duplicate group clustering, SHA-256, and auto-select
 │   ├── test_i18n.c                 # 100% key coverage verification across String IDs
 │   ├── test_renamer.c              # Renamer methods, tag patterns, and collision detection
+│   ├── test_scanner_filter.c       # File extension and size filter tests
 │   └── test_service.c              # Auto-decrypt, tracker persistence, and reconciliation
 │
 ├── build.bat                       # MinGW-w64 GCC build script (1-click compile)
 ├── Makefile                        # GNU Make build file
+├── kiosapi-models.db               # KiosAPI model and pricing catalog
 ├── README.md                       # Project overview (English)
 ├── README.en.md                    # Project overview (Bahasa Indonesia - as requested)
 └── README.id.md                    # Project overview (Bahasa Indonesia - standard alias)
@@ -180,7 +196,7 @@ gcc -O2 -Wall -Wextra -municode -mwindows -Iinclude ^
 
 ## 🧪 Automated Testing
 
-Five automated test suites are included to verify functionality without launching the GUI:
+Eight automated test suites are included to verify functionality without launching the GUI:
 
 ```cmd
 # 1. Cryptography & Shredder tests (9 suites)
@@ -188,20 +204,32 @@ gcc -O2 -Iinclude tests\test_crypto.c src\crypto.c src\shredder.c -lbcrypt -o te
 tests\test_crypto.exe
 
 # 2. Renamer engine & Collision tests
-gcc -O2 -Iinclude tests\test_renamer.c src\renamer.c -o tests\test_renamer.exe
+gcc -O2 -Iinclude tests\test_renamer.c src\renamer.c src\scanner.c -o tests\test_renamer.exe
 tests\test_renamer.exe
 
 # 3. Background service & Inactivity tracker tests
-gcc -O2 -Iinclude tests\test_service.c src\service.c src\crypto.c src\vault.c src\shredder.c -lbcrypt -lshlwapi -lole32 -loleaut32 -luuid -o tests\test_service.exe
+gcc -O2 -Iinclude tests\test_service.c src\service.c src\crypto.c src\vault.c src\shredder.c src\scanner.c src\i18n.c -lbcrypt -lshlwapi -lole32 -loleaut32 -luuid -o tests\test_service.exe
 tests\test_service.exe
 
 # 4. Multi-language (i18n) coverage tests
-gcc -O2 -Iinclude tests\test_i18n.c src\i18n.c -o tests\test_i18n.exe
+gcc -O2 -municode -Iinclude tests\test_i18n.c src\i18n.c -o tests\test_i18n.exe
 tests\test_i18n.exe
 
 # 5. Duplicate File Finder tests (SHA-256 & Auto-Select)
-gcc -O2 -Iinclude tests\test_duplicate.c src\duplicate.c -lbcrypt -lshell32 -o tests\test_duplicate.exe
+gcc -O2 -Iinclude tests\test_duplicate.c src\duplicate.c src\scanner.c -lbcrypt -lshell32 -o tests\test_duplicate.exe
 tests\test_duplicate.exe
+
+# 6. Encryption extension and file-size filter tests
+gcc -O2 -Iinclude tests\test_scanner_filter.c src\scanner.c -o tests\test_scanner_filter.exe
+tests\test_scanner_filter.exe
+
+# 7. KiosAPI model catalog and sorting tests (no API requests)
+gcc -O2 -Wall -Wextra -municode -Iinclude tests\test_model_tester.c src\model_tester.c -lwinhttp -lsqlite3 -o tests\test_model_tester.exe
+tests\test_model_tester.exe
+
+# 8. VS Code model configuration insertion and duplicate detection
+gcc -O2 -Wall -Wextra -municode -Iinclude tests\test_vscode_model_config.c src\vscode_model_config.c -lsqlite3 -o tests\test_vscode_model_config.exe
+tests\test_vscode_model_config.exe
 ```
 
 ---

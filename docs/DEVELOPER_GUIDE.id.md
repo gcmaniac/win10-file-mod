@@ -78,6 +78,8 @@ win10-file-mod/
 ├── include/                        # Header C publik
 │   ├── common.h                    # Konstanta inti, definisi tipe, dan batas path
 │   ├── crypto.h                    # API Windows CNG AES-256-GCM AEAD & PBKDF2
+│   ├── kiosapi_key.h               # Proteksi API key KiosAPI dengan Master Password
+│   ├── model_tester.h              # Loader katalog dan probe model KiosAPI
 │   ├── duplicate.h                 # API pencari berkas duplikat SHA-256 & Recycle Bin
 │   ├── i18n.h                      # Enumerasi StringId & API kendali multi-bahasa
 │   ├── renamer.h                   # Struktur renamer, metode, deteksi tabrakan & undo
@@ -89,6 +91,9 @@ win10-file-mod/
 │
 ├── src/                            # Berkas implementasi C
 │   ├── crypto.c                    # Enkripsi/dekripsi CNG BCrypt, PBKDF2, CSPRNG
+│   ├── kiosapi_key.c               # Penyimpanan terenkripsi dan pembukaan API key di memori
+│   ├── model_tester.c              # Query SQLite, request WinHTTP, dan histori probe
+│   ├── vscode_model_config.c      # Pembaruan JSON model VS Code dan pencadangan aman
 │   ├── duplicate.c                 # Mesin pencari duplikat 2-tier (ukuran + SHA-256)
 │   ├── i18n.c                      # Tabel lookup string multi-bahasa (EN / ID)
 │   ├── main.c                      # Titik masuk WinMain, parser CLI & single instance
@@ -104,9 +109,13 @@ win10-file-mod/
 │   ├── test_crypto.c               # 9 rangkaian verifikasi CNG AES-GCM, salt, shred
 │   ├── test_duplicate.c            # Pengujian pengelompokan duplikat SHA-256 & auto-select
 │   ├── test_i18n.c                 # Cakupan terjemahan 100% pada semua String ID
+│   ├── test_model_tester.c         # Katalog, ketersediaan terukur, dan sortir harga
+│   ├── test_vscode_model_config.c # Pelestarian konfigurasi VS Code dan duplikasi
 │   ├── test_renamer.c              # Metode rename, format tag, deteksi tabrakan
+│   ├── test_scanner_filter.c       # Filter ekstensi dan batas ukuran
 │   └── test_service.c              # Auto-dekripsi, tracker inaktivitas, startup recovery
 │
+├── kiosapi-models.db               # Katalog model dan harga KiosAPI
 ├── build.bat                       # Skrip kompilasi MinGW-w64 GCC (1-klik kompilasi)
 ├── Makefile                        # Skrip kompilasi GNU Make
 ├── README.md                       # Ringkasan proyek (Bahasa Inggris)
@@ -339,6 +348,14 @@ Ketika pengguna menekan tombol tutup window ([X] / Close) atau shortcut `Alt+F4`
 - **Komparator Pengurutan**: `ListView_SortItems(hList, explorer_list_compare_func, lParamSort)`.
 - **Panah Pengurutan Visual**: Mengambil header melalui `ListView_GetHeader` dan menerapkan flag native `HDF_SORTUP` / `HDF_SORTDOWN` pada `HDITEMW.fmt`.
 
+### Filter Enkripsi dan Penguji Model KiosAPI
+- Encrypt Explorer menyediakan pilihan semua file/dokumen/gambar/video dan batas ukuran maksimum dalam MB (`0` berarti tanpa batas). Filter ekstensi dan ukuran diterapkan pada hasil scanner sebelum enkripsi, baik untuk berkas terpilih maupun pemindaian folder.
+- `kiosapi_key.c` membuka key hanya setelah autentikasi vault. Pada penggunaan pertama, modul mengenkripsi `kiosapi-key.txt` ke file sementara `.wkey`, memverifikasi dekripsi AES-GCM, memindahkan hasil terenkripsi, lalu menimpa dan menghapus plaintext. Key yang dibuka hanya berada di memori sesi dan tidak boleh dicatat ke log.
+- `model_tester.c` membaca katalog `models` dari `kiosapi-models.db`, mengirim request HTTPS berurutan melalui WinHTTP setelah persetujuan pengguna, dan mencatat hasil ke `model_test_results` di SQLite.
+- Filter harga Model Tester memakai harga input/output per 1 juta token dari katalog. Kolom kosong berarti tanpa batas; jika batas diisi, baris tanpa harga katalog untuk jenis tersebut dikecualikan. **Uji semua model** dan **Pindai yang Dipilih** hanya berjalan pada daftar yang terlihat setelah filter.
+- `vscode_model_config.c` memvalidasi JSON berbentuk array provider dan hanya mengubah provider `KiosAPI All` yang sudah ada menggunakan fungsi JSON SQLite. Provider/model lain dipertahankan, ID duplikat dilewati, dan jika provider tidak ada aplikasi melaporkan kesalahan alih-alih membuat provider baru. Pembaruan ditulis ke file sementara dan mengganti konfigurasi hanya setelah cadangan bertimestamp berhasil dibuat.
+- Kolom ketersediaan adalah rasio keberhasilan probe lokal, bukan SLA/uptime resmi. Harga berasal dari `ui_input_price_per_1m` dan `ui_output_price_per_1m`; latensi yang ditampilkan adalah request terakhir. Probe dapat menimbulkan biaya API.
+
 ---
 
 ## 10. Layanan Latar Belakang & Integrasi Shell Explorer (`service.c`)
@@ -359,7 +376,7 @@ Fungsi `service_install()` mendaftarkan verb shell ke Registry Windows pengguna:
 
 ## 11. Subsistem Internasionalisasi (`i18n.c`, `i18n.h`)
 
-Seluruh teks antarmuka, item menu, judul kolom tabel, pesan dialog, dan tab dikelola melalui enumerasi `StringId` (total **160 ID string**):
+Seluruh teks antarmuka, item menu, judul kolom tabel, pesan dialog, dan tab dikelola melalui enumerasi `StringId`:
 - Bahasa Bawaan (Default): `LANG_EN` (Bahasa Inggris).
 - Bahasa yang Didukung: `LANG_EN`, `LANG_ID` (Bahasa Indonesia).
 - Penggantian Dinamis: Memanggil fungsi `i18n_set_language` yang dilanjutkan dengan `update_ui_texts(hWnd)` akan memperbarui seluruh teks label, tab, menu, dan kolom secara langsung tanpa perlu me-restart aplikasi.
@@ -374,21 +391,27 @@ Kompilasi menggunakan MinGW-w64 GCC dengan dukungan Unicode dan subsistem Window
 ```cmd
 windres src\resources.rc -O coff -o src\resources.o
 gcc -O2 -Wall -Wextra -municode -mwindows -Iinclude ^
-    src\main.c src\crypto.c src\vault.c src\scanner.c src\shredder.c src\renamer.c src\duplicate.c src\i18n.c src\service.c src\ui.c src\resources.o ^
-    -lbcrypt -lcomctl32 -lshell32 -lole32 -loleaut32 -luuid -lshlwapi ^
+    src\main.c src\crypto.c src\vault.c src\scanner.c src\shredder.c src\renamer.c src\duplicate.c src\i18n.c src\service.c src\kiosapi_key.c src\model_tester.c src\ui.c src\resources.o ^
+    -lbcrypt -lcomctl32 -lshell32 -lole32 -loleaut32 -luuid -lshlwapi -lwinhttp -lsqlite3 ^
     -o win10_file_enc.exe
 ```
 
 ### Rangkaian Pengujian (Test Suites)
-Tersedia lima file biner pengujian mandiri tanpa harus memuat antarmuka grafis pengguna:
+Tersedia tujuh rangkaian pengujian mandiri tanpa harus memuat antarmuka grafis pengguna:
 
 1. **`tests/test_crypto.exe`**:
    - Menguji keacakan `BCryptGenRandom`, penurunan kunci PBKDF2 dari salt email, enkripsi/dekripsi AES-256-GCM, penghancuran berkas (shredding), serta kegagalan autentikasi tag AEAD jika email pemulihan tidak cocok.
 2. **`tests/test_renamer.exe`**:
-   - Menguji fitur Cari & Ganti, penambahan awalan/akhiran, pola tag (`<name>`, `<inc:01>`), transformasi kapitalisasi teks, deteksi tabrakan nama, dan riwayat undo.
+   - Menguji fitur Cari & Ganti, penambahan awalan/akhiran, pola tag (`<name>`, `<inc:01>`), transformasi kapitalisasi teks, deteksi tabrakan nama, riwayat undo, serta filter tipe dan ukuran pemindaian folder.
 3. **`tests/test_service.exe`**:
    - Menguji dekripsi otomatis berkas tunggal dan folder, pelacak inaktivitas 30 menit, serialisasi berkas tracker persisten, enkripsi otomatis saat penutupan penuh, serta pendaftaran registry shell Explorer.
 4. **`tests/test_duplicate.exe`**:
-   - Menguji pemindaian berkas duplikat 2-tier, pengelompokan hash SHA-256 identik, diskriminasi berkas unik, recursive directory traversal, dan penandaan otomatis salinan (*auto-select copies*).
+   - Menguji pemindaian berkas duplikat 2-tier, pengelompokan hash SHA-256 identik, diskriminasi berkas unik, recursive directory traversal, penandaan otomatis salinan (*auto-select copies*), serta pemindaian terfilter.
 5. **`tests/test_i18n.exe`**:
-   - Memvalidasi 100% kelengkapan kunci terjemahan pada seluruh 160 `StringId` untuk Bahasa Inggris dan Bahasa Indonesia.
+   - Memvalidasi kelengkapan terjemahan pada semua `StringId` untuk Bahasa Inggris dan Bahasa Indonesia.
+6. **`tests/test_scanner_filter.exe`**:
+   - Menguji kecocokan kategori ekstensi, batas ukuran inklusif, dan nilai `0` tanpa batas.
+7. **`tests/test_model_tester.exe`**:
+   - Menguji pembacaan katalog, rasio probe lokal, latensi terakhir, sortir harga, dan pencocokan batas harga maksimum menggunakan SQLite sementara.
+8. **`tests/test_vscode_model_config.exe`**:
+   - Menguji penambahan model dan deteksi duplikasi pada file JSON sementara, termasuk pelestarian provider yang ada dan pembuatan cadangan.

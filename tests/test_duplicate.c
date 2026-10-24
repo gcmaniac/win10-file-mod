@@ -31,14 +31,21 @@ int wmain(void) {
     /* 2. Setup temporary test directory structure */
     wchar_t test_dir[MAX_PATH] = L"test_dup_dir";
     wchar_t test_sub[MAX_PATH] = L"test_dup_dir\\sub";
-    CreateDirectoryW(test_dir, NULL);
-    CreateDirectoryW(test_sub, NULL);
-
     wchar_t f1[MAX_PATH] = L"test_dup_dir\\original.txt";
     wchar_t f2[MAX_PATH] = L"test_dup_dir\\copy1.txt";
     wchar_t f3[MAX_PATH] = L"test_dup_dir\\sub\\copy2.txt";
     wchar_t f4[MAX_PATH] = L"test_dup_dir\\same_size_diff_content.txt";
     wchar_t f5[MAX_PATH] = L"test_dup_dir\\different_size.txt";
+    wchar_t f6[MAX_PATH] = L"test_dup_dir\\image_copy.jpg";
+    DeleteFileW(f1);
+    DeleteFileW(f2);
+    DeleteFileW(f3);
+    DeleteFileW(f4);
+    DeleteFileW(f5);
+    DeleteFileW(f6);
+    RemoveDirectoryW(test_sub);
+    CreateDirectoryW(test_dir, NULL);
+    CreateDirectoryW(test_sub, NULL);
 
     /* Content of 15 bytes */
     create_test_file(f1, "1234567890ABCDE");
@@ -62,6 +69,14 @@ int wmain(void) {
     assert(res->groups->count == 3);
     assert(res->groups->file_size == 15);
     wprintf(L"[PASS] Duplicate grouping detected exactly 1 group of 3 matching files (2 wasted copies).\n");
+
+    create_test_file(f6, "1234567890ABCDE");
+    duplicate_free_results(res);
+    res = duplicate_find_filtered(test_dir, true, SCANNER_FILE_TYPE_DOCUMENTS, 15, NULL, NULL, &cancel);
+    assert(res != NULL);
+    assert(res->total_scanned_files == 4);
+    assert(res->group_count == 1 && res->total_duplicates == 2);
+    wprintf(L"[PASS] Filtered scan applied document extensions and the inclusive 15-byte maximum.\n");
 
     /* 4. Test auto-select copies */
     duplicate_auto_select_copies(res);
@@ -87,6 +102,7 @@ int wmain(void) {
     DeleteFileW(f3);
     DeleteFileW(f4);
     DeleteFileW(f5);
+    DeleteFileW(f6);
     RemoveDirectoryW(test_sub);
     RemoveDirectoryW(test_dir);
 

@@ -2,6 +2,7 @@
 #define RENAMER_H
 
 #include "common.h"
+#include "scanner.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -90,6 +91,13 @@ bool renamer_add_item(RenameItemList *list, const wchar_t *full_path, uint64_t s
 
 /* Populate list from folder scanning */
 bool renamer_scan_folder(RenameItemList *list, const wchar_t *root_dir, bool recursive);
+bool renamer_scan_folder_filtered(
+    RenameItemList *list,
+    const wchar_t *root_dir,
+    bool recursive,
+    ScannerFileType file_type,
+    uint64_t max_file_size_bytes
+);
 
 /* Calculate new names for all items based on config and detect collisions (Live Preview) */
 void renamer_compute_preview(RenameItemList *list, const RenameConfig *cfg);

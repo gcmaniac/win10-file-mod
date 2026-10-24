@@ -29,6 +29,9 @@ win10_file_enc_vault.dat
 win10_file_enc_tracker.dat
 win10_file_enc_settings.ini
 email_reset_dispatch_audit.log
+kiosapi-key.txt
+kiosapi-key.wkey
+kiosapi-key.wkey.tmp
 
 # Test binaries & generated test data
 tests/*.exe
