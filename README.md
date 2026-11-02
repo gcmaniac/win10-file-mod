@@ -101,6 +101,13 @@ Everything compiles to a standalone, zero-dependency executable linking directly
 - **Multi-Select Scanning**: Select model rows with Ctrl/Shift and use the right-click **Scan Selected** command to probe only those models.
 - **Price Filters and VS Code Integration**: Filter by maximum input/output price per 1M tokens (blank means unlimited); test-all respects the visible filtered list. Right-click a single model to add it to the existing KiosAPI All provider in the VS Code model config, with duplicate detection and a timestamped backup.
 
+### 11. 📄 Image to PDF Merger (Folder-to-PDF)
+- **Folder Location Input & Auto-Scan**: Select or type any folder containing images; the app automatically scans and lists all supported image formats (`.jpg`, `.jpeg`, `.png`, `.bmp`, `.gif`, `.tif`, `.tiff`, `.webp`).
+- **Clear Page-Order User Notice**: Prominent instruction banner informing users that filenames inside the folder must already be named/sorted according to the desired PDF page order (e.g., `01.jpg`, `02.png`, `03.jpg`, etc.).
+- **Natural Logical Sequence Sorting**: Utilizes Windows `StrCmpLogicalW` so filenames like `1.jpg`, `2.jpg`, `10.jpg` are ordered in natural human numerical sequence rather than raw ASCII sequence.
+- **Pure Native ISO 32000-1 PDF Engine**: Compiles standard PDF 1.4 documents natively using Windows GDI+ with zero external third-party library dependencies. Automatically embeds DCTDecode JPEG compressed image streams with 92% quality and calculates exact point aspect ratios.
+- **Interactive List & Direct Actions**: View image dimensions, file size, and paths; double-click any row to open the source image. Click **Open PDF File** or **Open Folder** immediately upon completion.
+
 ---
 
 ## 📁 Repository Structure
@@ -125,6 +132,7 @@ win10-file-mod/
 │   ├── kiosapi_key.h               # Encrypted KiosAPI key storage API
 │   ├── model_tester.h              # SQLite catalog and model probe API
 │   ├── duplicate.h                 # SHA-256 duplicate finder engine & Recycle Bin API
+│   ├── img2pdf.h                   # Image-to-PDF scanning and PDF 1.4 generation API
 │   ├── i18n.h                      # Multi-language string tables and API
 │   ├── renamer.h                   # Renamer structures, collision detection, and undo
 │   ├── scanner.h                   # Directory traversal walker
@@ -138,6 +146,7 @@ win10-file-mod/
 │   ├── kiosapi_key.c               # Master Password-protected API key loading
 │   ├── model_tester.c              # SQLite model loading and WinHTTP probes
 │   ├── duplicate.c                 # 2-tier duplicate finder engine (sizing + SHA-256)
+│   ├── img2pdf.c                   # Native GDI+ image-to-PDF converter (ISO 32000-1)
 │   ├── i18n.c                      # Localized string lookup tables
 │   ├── main.c                      # WinMain entry point, CLI parser, and single instance
 │   ├── renamer.c                   # Advanced Renamer methods, tag parser, and undo

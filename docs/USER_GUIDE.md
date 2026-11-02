@@ -304,7 +304,34 @@ The **KiosAPI Model Tester** tab is available only after signing in with the Mas
 
 ---
 
-## 10. Multi-Language Switching
+## 10. Image to PDF Merger (Folder to PDF)
+
+Click the **📄 Image to PDF** tab in the top navigation bar to merge all image files in a folder into a single, beautifully formatted PDF document.
+
+### Step-by-Step Instructions
+1. **Source Folder Location**:
+   - Type the path to your folder in the **Folder location** field, or click **Browse...** to select a directory visually.
+   - Click **Scan Folder** (`Pindai Folder`) to discover all image files.
+2. **⚠️ Important Page Order Notice**:
+   - The prominent notice box highlights:
+     > *"⚠️ Important Note: Make sure the image files in the folder are already named and sorted according to the desired PDF page order (e.g. 01.jpg, 02.png, 03.jpg, etc.). Images will be assembled into the PDF based on this filename sequence."*
+   - The scanner applies Windows natural numerical sequence sorting (`StrCmpLogicalW`), ensuring `1.jpg`, `2.jpg`, `10.jpg` are ordered correctly.
+3. **Supported Formats**:
+   - `.jpg`, `.jpeg`, `.png`, `.bmp`, `.gif`, `.tif`, `.tiff`, and `.webp`.
+4. **Inspecting Images**:
+   - The list view displays **Page**, **File Name**, **Dimensions** (e.g. `1920 x 1080`), **Size**, and **Full Path**.
+   - **Double-click** any row in the list to instantly open and inspect the original image in the default Windows photo viewer.
+5. **Output PDF Settings**:
+   - The app automatically suggests a default destination: `<folder_path>\<folder_name>.pdf`.
+   - Click **Save As...** (`Pilih Lokasi...`) to choose a custom name or folder if desired.
+6. **Conversion & Direct Actions**:
+   - Click **📄 Convert Images to PDF** (`📄 Gabungkan Gambar ke PDF`).
+   - A real-time progress bar and status text track each page processed.
+   - Upon completion, click **📂 Open PDF File** (`📂 Buka File PDF`) to open the document immediately in your PDF viewer, or **📁 Open Folder** (`📁 Buka Folder`) to view the resulting file in Windows Explorer.
+
+---
+
+## 11. Multi-Language Switching
 
 The software features complete live runtime localization:
 - Open the **🌐 Language** (`🌐 Bahasa`) menu in the top menu bar.
@@ -315,7 +342,10 @@ The software features complete live runtime localization:
 
 ---
 
-## 11. Frequently Asked Questions (FAQ)
+## 12. Frequently Asked Questions (FAQ)
+
+#### Q: In what order are images combined into the PDF?
+**A**: Images are assembled in natural alphabetical/numerical sequence based on their filenames (using `StrCmpLogicalW`). To control page order, simply prefix or name your files with ordered numbers (e.g., `01.jpg`, `02.png`, `03.jpg`). You can also use the **🏷️ Bulk File Renamer** tab first to batch-number your files!
 
 #### Q: Why doesn't the application allow opening a second window when already running?
 **A**: To protect encryption integrity and prevent tracker database corruption (`win10_file_enc_tracker.dat`), the app enforces **Strict Single Instance** via a Windows Named Mutex (`Win10FileMod_App_SingleInstance_Mutex`). Launching the executable again safely restores the existing window to the foreground.

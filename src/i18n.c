@@ -223,7 +223,35 @@ static const wchar_t *g_StringsEN[STR_COUNT] = {
     [STR_MODEL_ADD_TO_VSCODE_SUCCESS]     = L"Model '%ls' was added to VS Code. The configuration backup is saved beside the file.",
     [STR_MODEL_ADD_TO_VSCODE_EXISTS]      = L"Model '%ls' is already in the KiosAPI All provider.",
     [STR_MODEL_ADD_TO_VSCODE_ERROR]       = L"Could not update the VS Code model configuration:\n%ls",
-    [STR_MODEL_ADD_TO_VSCODE_PATH_ERROR]  = L"Could not locate the current user's VS Code model configuration."
+    [STR_MODEL_ADD_TO_VSCODE_PATH_ERROR]  = L"Could not locate the current user's VS Code model configuration.",
+
+    /* Image to PDF View */
+    [STR_TAB_IMG2PDF]           = L"📄 Image to PDF",
+    [STR_MENU_IMG2PDF]          = L"📄 Image to PDF Converter",
+    [STR_IMG_GRP_FOLDER]        = L" 1. Source Folder & Image Scan ",
+    [STR_IMG_LBL_FOLDER]        = L"Folder location:",
+    [STR_IMG_BTN_SCAN]          = L"Scan Folder",
+    [STR_IMG_GRP_NOTICE]        = L" 2. Page Order Instructions & Notice ",
+    [STR_IMG_NOTICE_TEXT]       = L"⚠️ Important Note: Make sure the image files in the folder are already named and sorted according to the desired PDF page order (e.g. 01.jpg, 02.png, 03.jpg, etc.). Images will be assembled into the PDF based on this filename sequence.",
+    [STR_IMG_GRP_OUTPUT]        = L" 3. Output PDF Settings ",
+    [STR_IMG_LBL_OUTPUT]        = L"Output PDF file:",
+    [STR_IMG_BTN_BROWSE_OUT]    = L"Save As...",
+    [STR_IMG_COL_PAGE]          = L"Page",
+    [STR_IMG_COL_NAME]          = L"File Name",
+    [STR_IMG_COL_DIMENSIONS]    = L"Dimensions",
+    [STR_IMG_COL_SIZE]          = L"Size",
+    [STR_IMG_COL_PATH]          = L"Full Path",
+    [STR_IMG_BTN_CONVERT]       = L"📄 Convert Images to PDF",
+    [STR_IMG_BTN_OPEN_PDF]      = L"📂 Open PDF File",
+    [STR_IMG_BTN_OPEN_DIR]      = L"📁 Open Folder",
+    [STR_IMG_STATUS_READY]      = L"Ready. Select a folder with images to begin.",
+    [STR_IMG_STATUS_SCANNED]    = L"Found %d image file(s) sorted for PDF conversion.",
+    [STR_IMG_STATUS_NO_IMAGES]  = L"No supported images (.jpg, .jpeg, .png, .bmp, .gif, .tiff, .webp, .jp2) found in this folder.",
+    [STR_IMG_STATUS_CONVERTING] = L"Combining page %d of %d into PDF...",
+    [STR_IMG_STATUS_SUCCESS]    = L"PDF generated successfully with %d page(s)!",
+    [STR_IMG_STATUS_FAILED]     = L"Failed to generate PDF document! Please check write permissions.",
+    [STR_IMG_WARN_NO_IMAGES]    = L"No image files found to convert! Please choose a folder containing images.",
+    [STR_IMG_WARN_NO_OUT]       = L"Please specify a valid destination PDF file path!"
 };
 
 /* Indonesian translation table */
@@ -446,7 +474,33 @@ static const wchar_t *g_StringsID[STR_COUNT] = {
     [STR_MODEL_ADD_TO_VSCODE_SUCCESS]     = L"Model '%ls' ditambahkan ke VS Code. Cadangan konfigurasi tersimpan di samping file.",
     [STR_MODEL_ADD_TO_VSCODE_EXISTS]      = L"Model '%ls' sudah ada di provider KiosAPI All.",
     [STR_MODEL_ADD_TO_VSCODE_ERROR]       = L"Tidak dapat memperbarui konfigurasi model VS Code:\n%ls",
-    [STR_MODEL_ADD_TO_VSCODE_PATH_ERROR]  = L"Tidak dapat menemukan konfigurasi model VS Code pengguna saat ini."
+    [STR_MODEL_ADD_TO_VSCODE_PATH_ERROR]  = L"Tidak dapat menemukan konfigurasi model VS Code pengguna saat ini.",
+    [STR_TAB_IMG2PDF]           = L"📄 Gambar ke PDF",
+    [STR_MENU_IMG2PDF]          = L"📄 Penggabung Gambar ke PDF",
+    [STR_IMG_GRP_FOLDER]        = L" 1. Lokasi Folder Gambar & Pindai ",
+    [STR_IMG_LBL_FOLDER]        = L"Lokasi folder:",
+    [STR_IMG_BTN_SCAN]          = L"Pindai Folder",
+    [STR_IMG_GRP_NOTICE]        = L" 2. Petunjuk & Keterangan Pengurutan Halaman ",
+    [STR_IMG_NOTICE_TEXT]       = L"⚠️ Keterangan Penting: Pastikan nama file gambar di dalam folder sudah diurutkan sesuai urutan halaman yang akan menjadi file PDF nantinya (misal: 01.jpg, 02.png, 03.jpg, dst.). File akan disusun otomatis berdasarkan urutan nama berkas tersebut.",
+    [STR_IMG_GRP_OUTPUT]        = L" 3. Pengaturan Berkas PDF Keluaran ",
+    [STR_IMG_LBL_OUTPUT]        = L"Simpan PDF ke:",
+    [STR_IMG_BTN_BROWSE_OUT]    = L"Pilih Lokasi...",
+    [STR_IMG_COL_PAGE]          = L"Hal.",
+    [STR_IMG_COL_NAME]          = L"Nama Berkas",
+    [STR_IMG_COL_DIMENSIONS]    = L"Resolusi",
+    [STR_IMG_COL_SIZE]          = L"Ukuran Berkas",
+    [STR_IMG_COL_PATH]          = L"Lokasi Lengkap",
+    [STR_IMG_BTN_CONVERT]       = L"📄 Gabungkan Gambar ke PDF",
+    [STR_IMG_BTN_OPEN_PDF]      = L"📂 Buka File PDF",
+    [STR_IMG_BTN_OPEN_DIR]      = L"📁 Buka Folder",
+    [STR_IMG_STATUS_READY]      = L"Siap. Pilih folder lokasi gambar untuk memulai.",
+    [STR_IMG_STATUS_SCANNED]    = L"Ditemukan %d berkas gambar, diurutkan siap digabung.",
+    [STR_IMG_STATUS_NO_IMAGES]  = L"Tidak ada berkas gambar (.jpg, .jpeg, .png, .bmp, .gif, .tiff, .webp, .jp2) di folder ini.",
+    [STR_IMG_STATUS_CONVERTING] = L"Menggabungkan halaman %d dari %d ke PDF...",
+    [STR_IMG_STATUS_SUCCESS]    = L"Berhasil membuat berkas PDF dengan %d halaman!",
+    [STR_IMG_STATUS_FAILED]     = L"Gagal membuat berkas PDF! Pastikan izin akses folder dan path tujuan benar.",
+    [STR_IMG_WARN_NO_IMAGES]    = L"Tidak ada berkas gambar untuk digabungkan! Silakan pilih folder yang berisi gambar.",
+    [STR_IMG_WARN_NO_OUT]       = L"Silakan tentukan lokasi berkas PDF keluaran!"
 };
 
 void i18n_init(AppLanguage default_lang) {

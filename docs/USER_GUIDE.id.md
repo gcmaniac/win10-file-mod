@@ -315,7 +315,10 @@ Aplikasi mendukung lokalisasi dinamis secara langsung:
 
 ---
 
-## 11. Pertanyaan yang Sering Diajukan (FAQ)
+## 12. Pertanyaan yang Sering Diajukan (FAQ)
+
+#### T: Bagaimana urutan halaman gambar disusun dalam PDF?
+**J**: Gambar disusun berdasarkan urutan nama berkas secara alami (menggunakan fungsi Windows `StrCmpLogicalW`). Pastikan nama berkas gambar sudah diberi penomoran urut (misal: `01.jpg`, `02.png`, `03.jpg`). Anda juga dapat memanfaatkan tab **🏷️ Bulk File Renamer** terlebih dahulu untuk memberi penomoran massal pada berkas gambar!
 
 #### T: Mengapa aplikasi tidak mengizinkan membuka jendela baru jika aplikasi sudah berjalan?
 **J**: Sesuai arsitektur proteksi instansi tunggal (*Strict Single Instance*), aplikasi memanfaatkan Windows Mutex untuk mencegah duplikasi proses di memori dan menghindari tabrakan berkas pelacak enkripsi (`win10_file_enc_tracker.dat`). Jika Anda membuka kembali program, jendela yang sudah ada akan otomatis dipulihkan ke baris terdepan layar Anda.

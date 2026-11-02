@@ -358,7 +358,33 @@ When the user clicks the window close button ([X] / Close) or presses `Alt+F4`:
 
 ---
 
-## 10. Windows Explorer Shell & Daemon Service (`service.c`)
+## 10. Image-to-PDF Subsystem (`img2pdf.c`, `img2pdf.h`)
+
+### Native ISO 32000-1 (PDF 1.4) Architecture
+The `img2pdf` engine generates compliant PDF 1.4 documents natively without relying on heavy external PDF libraries (0 third-party dependencies):
+- **Object Hierarchy**: Writes standard cross-reference tables (`xref`), Trailer dictionaries, Document Catalog (`/Type /Catalog`), Pages Tree root (`/Type /Pages`), individual Page leaf objects (`/Type /Page`), and Content Streams (`/Length ... stream ... endstream`).
+- **Aspect Ratio & Coordinate Mapping**: Calculates page dimensions in standard PDF 72-DPI user space points based on source image pixel dimensions (`width * 72 / 96`), scaling and positioning each image seamlessly (`q ... 0 0 cm /ImX Do Q`).
+- **DCTDecode Compression via GDI+**: Dynamically loads `gdiplus.dll` at runtime using Win32 API (`LoadLibraryW`, `GetProcAddress`) to initialize GDI+ and encode images into JPEG format with 92% quality through an in-memory `IStream` (`CreateStreamOnHGlobal`).
+
+### Natural Human Numerical Ordering (`StrCmpLogicalW`)
+To sort files correctly according to human numerical sequence (`1.jpg`, `2.jpg`, `10.jpg` instead of ASCII `1.jpg`, `10.jpg`, `2.jpg`):
+```c
+static int compare_img_items(const void *a, const void *b) {
+    const Img2PdfItem *itemA = (const Img2PdfItem *)a;
+    const Img2PdfItem *itemB = (const Img2PdfItem *)b;
+    return StrCmpLogicalW(itemA->file_name, itemB->file_name);
+}
+```
+
+### Worker Thread & Asynchronous UI Updates
+The conversion executes on a background thread (`img2pdf_worker_thread`) to maintain full GUI responsiveness:
+- Progress updates are delivered via `PostMessageW(hWnd, WM_APP_IMG_PROGRESS, current, total)`.
+- Thread completion posts `WM_APP_IMG_FINISHED` with the total pages generated.
+- Supports voluntary cancellation via `volatile bool *cancel_flag`.
+
+---
+
+## 11. Windows Explorer Shell & Daemon Service (`service.c`)
 
 ### IShellWindows COM Monitoring
 `service.c` runs `explorer_monitor_thread` which enumerates active File Explorer windows:
@@ -374,7 +400,7 @@ When the user clicks the window close button ([X] / Close) or presses `Alt+F4`:
 
 ---
 
-## 11. Internationalization Subsystem (`i18n.c`, `i18n.h`)
+## 12. Internationalization Subsystem (`i18n.c`, `i18n.h`)
 
 All UI strings, menu items, table headers, dialog messages, and tabs are referenced via the `StringId` enum:
 - Default Language: `LANG_EN` (English).
@@ -383,7 +409,7 @@ All UI strings, menu items, table headers, dialog messages, and tabs are referen
 
 ---
 
-## 12. Build System & Automated Testing
+## 13. Build System & Automated Testing
 
 ### GCC Compilation Flags
 Compile using MinGW-w64 GCC with Unicode and Windows subsystems enabled:
@@ -415,3 +441,5 @@ Seven standalone test suites validate functionality without launching the GUI:
    - Tests catalog loading, locally measured probe ratios, latest latency, price sorting, and maximum-price matching using a temporary SQLite database.
 8. **`tests/test_vscode_model_config.exe`**:
    - Tests model insertion and duplicate detection against a temporary VS Code JSON file, including preservation of existing providers and creation of a backup.
+9. **`tests/test_img2pdf.exe`**:
+   - Validates folder image scanning, extension filtering, natural logical sorting (`StrCmpLogicalW`), aspect-ratio calculation, GDI+ dynamic runtime encoding, and ISO 32000-1 PDF document generation.

@@ -10,8 +10,10 @@
 #include "kiosapi_key.h"
 #include "model_tester.h"
 #include "vscode_model_config.h"
+#include "img2pdf.h"
 #include <shlobj.h>
 #include <shellapi.h>
+#include <commdlg.h>
 #include <sqlite3.h>
 #include <errno.h>
 #include <math.h>
@@ -23,6 +25,7 @@
 #define IDM_VIEW_RENAME         2004
 #define IDM_VIEW_DUPLICATES     2007
 #define IDM_VIEW_MODEL_TESTER   2008
+#define IDM_VIEW_IMG2PDF        2009
 #define IDM_HELP_GUIDE          2005
 #define IDM_HELP_ABOUT          2006
 #define IDM_LANG_EN             2010
@@ -163,6 +166,25 @@
 #define IDC_MODEL_MAX_OUTPUT_LABEL 3311
 #define IDC_MODEL_MAX_OUTPUT     3312
 #define IDM_MODEL_ADD_TO_VSCODE  3313
+/* Page 5 (Image to PDF Converter) IDs */
+#define IDC_IMG_GRP_FOLDER       3401
+#define IDC_IMG_LBL_FOLDER       3402
+#define IDC_IMG_EDIT_FOLDER      3403
+#define IDC_IMG_BTN_BROWSE       3404
+#define IDC_IMG_BTN_SCAN         3405
+#define IDC_IMG_GRP_NOTICE       3406
+#define IDC_IMG_NOTICE_TEXT      3407
+#define IDC_IMG_GRP_OUTPUT       3408
+#define IDC_IMG_LBL_OUTPUT       3409
+#define IDC_IMG_EDIT_OUT         3410
+#define IDC_IMG_BTN_BROWSE_OUT   3411
+#define IDC_IMG_LISTVIEW         3412
+#define IDC_IMG_PROGRESS         3413
+#define IDC_IMG_STATIC_STATUS    3414
+#define IDC_IMG_BTN_CONVERT      3415
+#define IDC_IMG_BTN_OPEN_PDF     3416
+#define IDC_IMG_BTN_OPEN_DIR     3417
+#define IDC_IMG_CHK_RECURSIVE    3418
 
 /* Custom Thread Messages */
 #define WM_APP_LOG_MSG          (WM_APP + 1)
@@ -173,6 +195,8 @@
 #define WM_APP_DUP_FINISHED     (WM_APP + 11)
 #define WM_APP_MODEL_PROGRESS   (WM_APP + 12)
 #define WM_APP_MODEL_FINISHED   (WM_APP + 13)
+#define WM_APP_IMG_PROGRESS     (WM_APP + 14)
+#define WM_APP_IMG_FINISHED     (WM_APP + 15)
 
 /* Global Window Handles */
 static HWND g_hWndMain = NULL;
@@ -345,6 +369,45 @@ static size_t g_modelVisibleCount = 0;
 static HANDLE g_hModelThread = NULL;
 static volatile bool g_bModelCancel = false;
 static bool g_bModelTesting = false;
+
+/* Page 5 (Image to PDF) Handles & State */
+static HWND g_hImgCtrls[20] = {0};
+static int  g_nImgCtrls = 0;
+static HWND g_hImgGrpFolder = NULL;
+static HWND g_hImgLblFolder = NULL;
+static HWND g_hImgEditFolder = NULL;
+static HWND g_hImgBtnBrowse = NULL;
+static HWND g_hImgChkRecursive = NULL;
+static WNDPROC g_pfnOrigImgFolderProc = NULL;
+static HWND g_hImgBtnScan = NULL;
+static HWND g_hImgGrpNotice = NULL;
+static HWND g_hImgNoticeText = NULL;
+static HWND g_hImgGrpOutput = NULL;
+static HWND g_hImgLblOutput = NULL;
+static HWND g_hImgEditOut = NULL;
+static HWND g_hImgBtnBrowseOut = NULL;
+static HWND g_hImgList = NULL;
+static HWND g_hImgProgress = NULL;
+static HWND g_hImgStaticStatus = NULL;
+static HWND g_hImgBtnConvert = NULL;
+static HWND g_hImgBtnOpenPdf = NULL;
+static HWND g_hImgBtnOpenDir = NULL;
+static Img2PdfItemList *g_pImgList = NULL;
+static HANDLE g_hImgThread = NULL;
+static volatile bool g_bImgConverting = false;
+static volatile bool g_bImgCancel = false;
+static wchar_t g_szLastPdfPath[MAX_PATH * 2] = {0};
+
+typedef struct {
+    HWND hWnd;
+    Img2PdfItemList *list;
+    wchar_t output_path[MAX_PATH * 2];
+} ImgConvertWorkerParams;
+
+static void scan_img2pdf_folder(HWND hWnd);
+static void populate_img2pdf_list(HWND hList, Img2PdfItemList *list);
+static void start_img2pdf_conversion(HWND hWnd);
+static void browse_save_pdf(HWND hWnd, HWND hEdit);
 
 typedef struct {
     HWND hWnd;
@@ -664,6 +727,7 @@ static void show_page(int page_idx) {
     bool on_ren = (page_idx == 1);
     bool on_dup = (page_idx == 2);
     bool on_model = (page_idx == 3);
+    bool on_img = (page_idx == 4);
 
     bool is_cfg = vault_is_configured();
 
@@ -697,6 +761,9 @@ static void show_page(int page_idx) {
     }
     for (int i = 0; i < g_nModelLockCtrls; i++) {
         if (g_hModelLockCtrls[i]) ShowWindow(g_hModelLockCtrls[i], (on_model && !g_bAuthenticated) ? SW_SHOW : SW_HIDE);
+    }
+    for (int i = 0; i < g_nImgCtrls; i++) {
+        if (g_hImgCtrls[i]) ShowWindow(g_hImgCtrls[i], on_img ? SW_SHOW : SW_HIDE);
     }
 
     if (on_enc) {
@@ -743,6 +810,20 @@ static void show_page(int page_idx) {
         } else {
             SetWindowTextW(g_hModelLockInfo, i18n_get(STR_MODEL_LOCKED));
             SetFocus(g_hModelLockLogin);
+        }
+    } else if (on_img) {
+        wchar_t f1[MAX_PATH * 2] = {0};
+        wchar_t f4[MAX_PATH * 2] = {0};
+        GetWindowTextW(g_hEditFolder, f1, MAX_PATH * 2);
+        GetWindowTextW(g_hImgEditFolder, f4, MAX_PATH * 2);
+        if (wcslen(f4) == 0) {
+            if (wcslen(f1) > 0) {
+                SetWindowTextW(g_hImgEditFolder, f1);
+                scan_img2pdf_folder(g_hWndMain);
+            } else if (g_szLastFolder[0] != L'\0') {
+                SetWindowTextW(g_hImgEditFolder, g_szLastFolder);
+                scan_img2pdf_folder(g_hWndMain);
+            }
         }
     }
 
@@ -2103,6 +2184,218 @@ static void show_forgot_password_dialog(HWND hWndParent) {
 /* Dynamic Window Layout & Resizing                                          */
 /* ========================================================================= */
 
+static void img_progress_cb(const wchar_t *current_file, int current_index, int total_files, const wchar_t *status_msg, void *user_data) {
+    (void)current_file;
+    (void)status_msg;
+    HWND hWnd = (HWND)user_data;
+    PostMessageW(hWnd, WM_APP_IMG_PROGRESS, (WPARAM)current_index, (LPARAM)total_files);
+}
+
+static DWORD WINAPI img2pdf_worker_thread(LPVOID lpParam) {
+    ImgConvertWorkerParams *params = (ImgConvertWorkerParams *)lpParam;
+    if (!params) return 0;
+
+    int total_pages = (int)params->list->count;
+    bool ok = img2pdf_convert_to_pdf(params->list, params->output_path, img_progress_cb, params->hWnd, &g_bImgCancel);
+
+    PostMessageW(params->hWnd, WM_APP_IMG_FINISHED, (WPARAM)ok, (LPARAM)total_pages);
+    free(params);
+    return 0;
+}
+
+static void populate_img2pdf_list(HWND hList, Img2PdfItemList *list) {
+    if (!hList) return;
+    ListView_DeleteAllItems(hList);
+
+    if (!list || list->count == 0) {
+        if (g_hImgStaticStatus) {
+            SetWindowTextW(g_hImgStaticStatus, i18n_get(STR_IMG_STATUS_NO_IMAGES));
+        }
+        if (g_hImgBtnConvert) EnableWindow(g_hImgBtnConvert, FALSE);
+        if (g_hImgProgress) SendMessage(g_hImgProgress, PBM_SETPOS, 0, 0);
+        return;
+    }
+
+    for (size_t i = 0; i < list->count; i++) {
+        Img2PdfItem *p = &list->items[i];
+        LVITEMW lvi = {0};
+        lvi.mask = LVIF_TEXT;
+        lvi.iItem = (int)i;
+
+        wchar_t pageStr[32];
+        swprintf(pageStr, 32, L"%zu", i + 1);
+        lvi.pszText = pageStr;
+        ListView_InsertItem(hList, &lvi);
+
+        ListView_SetItemText(hList, (int)i, 1, p->file_name);
+
+        wchar_t dimStr[64];
+        if (p->width > 0 && p->height > 0) {
+            swprintf(dimStr, 64, L"%u x %u", p->width, p->height);
+        } else {
+            wcscpy(dimStr, L"-");
+        }
+        ListView_SetItemText(hList, (int)i, 2, dimStr);
+
+        wchar_t sizeStr[64];
+        if (p->file_size < 1024) {
+            swprintf(sizeStr, 64, L"%llu B", (unsigned long long)p->file_size);
+        } else if (p->file_size < 1024 * 1024) {
+            swprintf(sizeStr, 64, L"%.1f KB", (double)p->file_size / 1024.0);
+        } else {
+            swprintf(sizeStr, 64, L"%.1f MB", (double)p->file_size / (1024.0 * 1024.0));
+        }
+        ListView_SetItemText(hList, (int)i, 3, sizeStr);
+
+        ListView_SetItemText(hList, (int)i, 4, p->full_path);
+    }
+
+    if (g_hImgStaticStatus) {
+        wchar_t status[256];
+        swprintf(status, 256, i18n_get(STR_IMG_STATUS_SCANNED), (int)list->count);
+        SetWindowTextW(g_hImgStaticStatus, status);
+    }
+
+    if (g_hImgBtnConvert) EnableWindow(g_hImgBtnConvert, TRUE);
+    if (g_hImgProgress) {
+        SendMessage(g_hImgProgress, PBM_SETRANGE, 0, MAKELPARAM(0, (int)list->count));
+        SendMessage(g_hImgProgress, PBM_SETPOS, 0, 0);
+    }
+}
+
+static LRESULT CALLBACK img_folder_edit_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    if (uMsg == WM_KEYDOWN && wParam == VK_RETURN) {
+        HWND hParent = GetParent(hWnd);
+        if (hParent && g_hImgBtnScan && IsWindowEnabled(g_hImgBtnScan)) {
+            SendMessage(hParent, WM_COMMAND, MAKEWPARAM(IDC_IMG_BTN_SCAN, BN_CLICKED), (LPARAM)g_hImgBtnScan);
+        }
+        return 0;
+    } else if (uMsg == WM_CHAR && wParam == VK_RETURN) {
+        return 0;
+    }
+    return CallWindowProcW(g_pfnOrigImgFolderProc, hWnd, uMsg, wParam, lParam);
+}
+
+static void scan_img2pdf_folder(HWND hWnd) {
+    (void)hWnd;
+    if (!g_hImgEditFolder) return;
+    wchar_t rawFolder[MAX_PATH * 2] = {0};
+    GetWindowTextW(g_hImgEditFolder, rawFolder, MAX_PATH * 2);
+
+    wchar_t folder[MAX_PATH * 2] = {0};
+    sanitize_path(rawFolder, folder, MAX_PATH * 2);
+    if (wcslen(folder) == 0) return;
+
+    if (!g_pImgList) {
+        g_pImgList = img2pdf_create_list();
+    }
+
+    if (g_hImgStaticStatus) {
+        SetWindowTextW(g_hImgStaticStatus, (i18n_get_language() == LANG_ID) ? L"Memindai berkas gambar..." : L"Scanning image files...");
+    }
+
+    bool recursive = true;
+    if (g_hImgChkRecursive) {
+        recursive = (SendMessage(g_hImgChkRecursive, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    }
+    img2pdf_scan_folder(g_pImgList, folder, recursive);
+    populate_img2pdf_list(g_hImgList, g_pImgList);
+
+    /* Set default output PDF path if empty or if from different folder */
+    wchar_t currentOut[MAX_PATH * 2] = {0};
+    GetWindowTextW(g_hImgEditOut, currentOut, MAX_PATH * 2);
+    if (wcslen(currentOut) == 0 || wcsncmp(currentOut, folder, wcslen(folder)) != 0) {
+        const wchar_t *lastSlash = wcsrchr(folder, L'\\');
+        const wchar_t *folderName = lastSlash ? (lastSlash + 1) : folder;
+        if (wcslen(folderName) == 0) folderName = L"document";
+
+        wchar_t defaultOut[MAX_PATH * 2] = {0};
+        swprintf(defaultOut, MAX_PATH * 2, L"%ls\\%ls.pdf", folder, folderName);
+        SetWindowTextW(g_hImgEditOut, defaultOut);
+        wcsncpy(g_szLastPdfPath, defaultOut, MAX_PATH * 2 - 1);
+    }
+}
+
+static void browse_save_pdf(HWND hWnd, HWND hEdit) {
+    OPENFILENAMEW ofn = {0};
+    wchar_t szFile[MAX_PATH * 2] = {0};
+    GetWindowTextW(hEdit, szFile, MAX_PATH * 2);
+
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = hWnd;
+    ofn.lpstrFile = szFile;
+    ofn.nMaxFile = sizeof(szFile) / sizeof(szFile[0]);
+    ofn.lpstrFilter = L"PDF Documents (*.pdf)\0*.pdf\0All Files (*.*)\0*.*\0";
+    ofn.nFilterIndex = 1;
+    ofn.lpstrDefExt = L"pdf";
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
+
+    if (GetSaveFileNameW(&ofn)) {
+        SetWindowTextW(hEdit, szFile);
+        wcsncpy(g_szLastPdfPath, szFile, MAX_PATH * 2 - 1);
+    }
+}
+
+static void start_img2pdf_conversion(HWND hWnd) {
+    if (g_bImgConverting) return;
+
+    if (!g_pImgList || g_pImgList->count == 0) {
+        MessageBoxW(hWnd, i18n_get(STR_IMG_WARN_NO_IMAGES), i18n_get(STR_APP_TITLE), MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    wchar_t rawOut[MAX_PATH * 2] = {0};
+    GetWindowTextW(g_hImgEditOut, rawOut, MAX_PATH * 2);
+    wchar_t outPath[MAX_PATH * 2] = {0};
+    sanitize_path(rawOut, outPath, MAX_PATH * 2);
+
+    if (wcslen(outPath) == 0) {
+        MessageBoxW(hWnd, i18n_get(STR_IMG_WARN_NO_OUT), i18n_get(STR_APP_TITLE), MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    ImgConvertWorkerParams *params = (ImgConvertWorkerParams *)malloc(sizeof(ImgConvertWorkerParams));
+    if (!params) return;
+
+    params->hWnd = hWnd;
+    params->list = g_pImgList;
+    wcsncpy(params->output_path, outPath, MAX_PATH * 2 - 1);
+    params->output_path[MAX_PATH * 2 - 1] = L'\0';
+
+    g_bImgConverting = true;
+    g_bImgCancel = false;
+
+    EnableWindow(g_hImgBtnConvert, FALSE);
+    EnableWindow(g_hImgBtnScan, FALSE);
+    EnableWindow(g_hImgBtnBrowse, FALSE);
+    EnableWindow(g_hImgBtnBrowseOut, FALSE);
+    EnableWindow(g_hImgBtnOpenPdf, FALSE);
+    EnableWindow(g_hImgBtnOpenDir, FALSE);
+
+    if (g_hImgProgress) {
+        SendMessage(g_hImgProgress, PBM_SETRANGE, 0, MAKELPARAM(0, (int)g_pImgList->count));
+        SendMessage(g_hImgProgress, PBM_SETPOS, 0, 0);
+    }
+    if (g_hImgStaticStatus) {
+        wchar_t status[256];
+        swprintf(status, 256, i18n_get(STR_IMG_STATUS_CONVERTING), 0, (int)g_pImgList->count);
+        SetWindowTextW(g_hImgStaticStatus, status);
+    }
+
+    g_hImgThread = CreateThread(NULL, 0, img2pdf_worker_thread, params, 0, NULL);
+    if (!g_hImgThread) {
+        free(params);
+        g_bImgConverting = false;
+        EnableWindow(g_hImgBtnConvert, TRUE);
+        EnableWindow(g_hImgBtnScan, TRUE);
+        EnableWindow(g_hImgBtnBrowse, TRUE);
+        EnableWindow(g_hImgBtnBrowseOut, TRUE);
+        if (g_hImgStaticStatus) {
+            SetWindowTextW(g_hImgStaticStatus, i18n_get(STR_IMG_STATUS_FAILED));
+        }
+    }
+}
+
 static void layout_controls(HWND hWnd, int cx, int cy) {
     (void)hWnd;
     if (cx <= 0 || cy <= 0) return;
@@ -2270,6 +2563,42 @@ static void layout_controls(HWND hWnd, int cx, int cy) {
             SetWindowPos(g_hModelLockInfo, NULL, cardX + 20, cardY + 20, cardW - 40, 45, SWP_NOZORDER);
             SetWindowPos(g_hModelLockLogin, NULL, cardX + 150, cardY + 85, cardW - 300, 36, SWP_NOZORDER);
         }
+    } else if (cur_tab == 4) {
+        /* Page 5 (Image to PDF Converter) Layout */
+        /* 1. Source Folder & Scan */
+        SetWindowPos(g_hImgGrpFolder, NULL, 15, 35, cx - 30, 56, SWP_NOZORDER);
+        SetWindowPos(g_hImgLblFolder, NULL, 25, 56, 100, 20, SWP_NOZORDER);
+        SetWindowPos(g_hImgEditFolder, NULL, 130, 54, cx - 470, 24, SWP_NOZORDER);
+        SetWindowPos(g_hImgBtnBrowse, NULL, cx - 330, 53, 85, 26, SWP_NOZORDER);
+        SetWindowPos(g_hImgChkRecursive, NULL, cx - 235, 55, 125, 22, SWP_NOZORDER);
+        SetWindowPos(g_hImgBtnScan, NULL, cx - 105, 53, 90, 26, SWP_NOZORDER);
+
+        /* 2. Notice / Instructions */
+        SetWindowPos(g_hImgGrpNotice, NULL, 15, 96, cx - 30, 62, SWP_NOZORDER);
+        SetWindowPos(g_hImgNoticeText, NULL, 25, 114, cx - 50, 38, SWP_NOZORDER);
+
+        /* 3. Output PDF Settings */
+        SetWindowPos(g_hImgGrpOutput, NULL, 15, 163, cx - 30, 56, SWP_NOZORDER);
+        SetWindowPos(g_hImgLblOutput, NULL, 25, 184, 110, 20, SWP_NOZORDER);
+        SetWindowPos(g_hImgEditOut, NULL, 140, 182, cx - 260, 24, SWP_NOZORDER);
+        SetWindowPos(g_hImgBtnBrowseOut, NULL, cx - 110, 181, 95, 26, SWP_NOZORDER);
+
+        /* 4. List of Images */
+        int listY = 224;
+        int bottomAreaH = 80;
+        int listH = cy - listY - bottomAreaH;
+        if (listH < 100) listH = 100;
+        SetWindowPos(g_hImgList, NULL, 15, listY, cx - 30, listH, SWP_NOZORDER);
+
+        /* 5. Progress, Status, Action Buttons */
+        int bY = listY + listH + 6;
+        SetWindowPos(g_hImgProgress, NULL, 15, bY, cx - 30, 14, SWP_NOZORDER);
+        SetWindowPos(g_hImgStaticStatus, NULL, 15, bY + 18, cx - 30, 20, SWP_NOZORDER);
+
+        int btnY = bY + 42;
+        SetWindowPos(g_hImgBtnConvert, NULL, 15, btnY, 230, 28, SWP_NOZORDER);
+        SetWindowPos(g_hImgBtnOpenPdf, NULL, 255, btnY, 150, 28, SWP_NOZORDER);
+        SetWindowPos(g_hImgBtnOpenDir, NULL, 415, btnY, 140, 28, SWP_NOZORDER);
     }
 }
 
@@ -2291,6 +2620,7 @@ static HMENU create_app_menu(void) {
     AppendMenuW(hViewMenu, MF_STRING, IDM_VIEW_RENAME, i18n_get(STR_TAB_RENAME));
     AppendMenuW(hViewMenu, MF_STRING, IDM_VIEW_DUPLICATES, i18n_get(STR_TAB_DUPLICATES));
     AppendMenuW(hViewMenu, MF_STRING, IDM_VIEW_MODEL_TESTER, i18n_get(STR_TAB_MODEL_TESTER));
+    AppendMenuW(hViewMenu, MF_STRING, IDM_VIEW_IMG2PDF, i18n_get(STR_TAB_IMG2PDF));
     AppendMenuW(hMenuBar, MF_POPUP, (UINT_PTR)hViewMenu, i18n_get(STR_MENU_MODES));
 
     HMENU hLangMenu = CreatePopupMenu();
@@ -2345,6 +2675,8 @@ static void update_ui_texts(HWND hWnd) {
         TabCtrl_SetItem(g_hTab, 2, &tie);
         tie.pszText = (LPWSTR)i18n_get(STR_TAB_MODEL_TESTER);
         TabCtrl_SetItem(g_hTab, 3, &tie);
+        tie.pszText = (LPWSTR)i18n_get(STR_TAB_IMG2PDF);
+        TabCtrl_SetItem(g_hTab, 4, &tie);
     }
 
     /* Refresh Setup View */
@@ -2481,6 +2813,34 @@ static void update_ui_texts(HWND hWnd) {
         ListView_SetColumn(g_hModelList, 5, &c);
         c.pszText = (LPWSTR)i18n_get(STR_MODEL_COL_RESULT);
         ListView_SetColumn(g_hModelList, 6, &c);
+    }
+    /* Refresh Image to PDF View */
+    if (g_hImgGrpFolder) SetWindowTextW(g_hImgGrpFolder, i18n_get(STR_IMG_GRP_FOLDER));
+    if (g_hImgLblFolder) SetWindowTextW(g_hImgLblFolder, i18n_get(STR_IMG_LBL_FOLDER));
+    if (g_hImgChkRecursive) SetWindowTextW(g_hImgChkRecursive, i18n_get(STR_CHK_RECURSIVE));
+    if (g_hImgBtnScan) SetWindowTextW(g_hImgBtnScan, i18n_get(STR_IMG_BTN_SCAN));
+    if (g_hImgGrpNotice) SetWindowTextW(g_hImgGrpNotice, i18n_get(STR_IMG_GRP_NOTICE));
+    if (g_hImgNoticeText) SetWindowTextW(g_hImgNoticeText, i18n_get(STR_IMG_NOTICE_TEXT));
+    if (g_hImgGrpOutput) SetWindowTextW(g_hImgGrpOutput, i18n_get(STR_IMG_GRP_OUTPUT));
+    if (g_hImgLblOutput) SetWindowTextW(g_hImgLblOutput, i18n_get(STR_IMG_LBL_OUTPUT));
+    if (g_hImgBtnBrowseOut) SetWindowTextW(g_hImgBtnBrowseOut, i18n_get(STR_IMG_BTN_BROWSE_OUT));
+    if (g_hImgBtnConvert) SetWindowTextW(g_hImgBtnConvert, i18n_get(STR_IMG_BTN_CONVERT));
+    if (g_hImgBtnOpenPdf) SetWindowTextW(g_hImgBtnOpenPdf, i18n_get(STR_IMG_BTN_OPEN_PDF));
+    if (g_hImgBtnOpenDir) SetWindowTextW(g_hImgBtnOpenDir, i18n_get(STR_IMG_BTN_OPEN_DIR));
+
+    if (g_hImgList) {
+        LVCOLUMNW col = {0};
+        col.mask = LVCF_TEXT;
+        col.pszText = (LPWSTR)i18n_get(STR_IMG_COL_PAGE);
+        ListView_SetColumn(g_hImgList, 0, &col);
+        col.pszText = (LPWSTR)i18n_get(STR_IMG_COL_NAME);
+        ListView_SetColumn(g_hImgList, 1, &col);
+        col.pszText = (LPWSTR)i18n_get(STR_IMG_COL_DIMENSIONS);
+        ListView_SetColumn(g_hImgList, 2, &col);
+        col.pszText = (LPWSTR)i18n_get(STR_IMG_COL_SIZE);
+        ListView_SetColumn(g_hImgList, 3, &col);
+        col.pszText = (LPWSTR)i18n_get(STR_IMG_COL_PATH);
+        ListView_SetColumn(g_hImgList, 4, &col);
     }
 
     RECT rc;
@@ -3426,6 +3786,7 @@ bool ui_init(HINSTANCE hInstance) {
 
     g_pRenameList = renamer_create_list();
     g_pUndoHistory = renamer_create_undo();
+    g_pImgList = img2pdf_create_list();
 
     WNDCLASSEXW wc = {0};
     wc.cbSize = sizeof(wc);
@@ -3542,6 +3903,9 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
             tie.pszText = (LPWSTR)i18n_get(STR_TAB_MODEL_TESTER);
             TabCtrl_InsertItem(g_hTab, 3, &tie);
+
+            tie.pszText = (LPWSTR)i18n_get(STR_TAB_IMG2PDF);
+            TabCtrl_InsertItem(g_hTab, 4, &tie);
 
             /* ================= VIEW 1A: SETUP / ONBOARDING ================= */
             g_hSetupGrp = CreateWindowExW(0, L"BUTTON", L" 🛡️ Pengaturan Keamanan Master & Email Pemulihan (Wajib) ",
@@ -4084,6 +4448,121 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             mc.cx = 110; mc.pszText = (LPWSTR)i18n_get(STR_MODEL_COL_INPUT); ListView_InsertColumn(g_hModelList, 4, &mc);
             mc.cx = 105; mc.pszText = (LPWSTR)i18n_get(STR_MODEL_COL_LATENCY); ListView_InsertColumn(g_hModelList, 5, &mc);
             mc.cx = 130; mc.pszText = (LPWSTR)i18n_get(STR_MODEL_COL_RESULT); ListView_InsertColumn(g_hModelList, 6, &mc);
+
+            /* ================= PAGE 5: IMAGE TO PDF CONVERTER ================= */
+            /* 1. Folder group & controls */
+            g_hImgGrpFolder = CreateWindowExW(0, L"BUTTON", i18n_get(STR_IMG_GRP_FOLDER),
+                WS_CHILD | BS_GROUPBOX, 0, 0, 700, 56, hWnd, (HMENU)IDC_IMG_GRP_FOLDER, NULL, NULL);
+            set_font(g_hImgGrpFolder, g_hFontBold);
+            register_ctrl(g_hImgCtrls, &g_nImgCtrls, 20, g_hImgGrpFolder);
+
+            g_hImgLblFolder = CreateWindowExW(0, L"STATIC", i18n_get(STR_IMG_LBL_FOLDER),
+                WS_CHILD, 0, 0, 100, 20, hWnd, (HMENU)IDC_IMG_LBL_FOLDER, NULL, NULL);
+            set_font(g_hImgLblFolder, g_hFont);
+            register_ctrl(g_hImgCtrls, &g_nImgCtrls, 20, g_hImgLblFolder);
+
+            g_hImgEditFolder = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                WS_CHILD | ES_AUTOHSCROLL | WS_TABSTOP, 0, 0, 300, 24, hWnd, (HMENU)IDC_IMG_EDIT_FOLDER, NULL, NULL);
+            set_font(g_hImgEditFolder, g_hFont);
+            register_ctrl(g_hImgCtrls, &g_nImgCtrls, 20, g_hImgEditFolder);
+
+            g_hImgBtnBrowse = CreateWindowExW(0, L"BUTTON", i18n_get(STR_BTN_BROWSE),
+                WS_CHILD | BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 85, 26, hWnd, (HMENU)IDC_IMG_BTN_BROWSE, NULL, NULL);
+            set_font(g_hImgBtnBrowse, g_hFont);
+            register_ctrl(g_hImgCtrls, &g_nImgCtrls, 20, g_hImgBtnBrowse);
+
+            g_hImgChkRecursive = CreateWindowExW(0, L"BUTTON", i18n_get(STR_CHK_RECURSIVE),
+                WS_CHILD | BS_AUTOCHECKBOX | WS_TABSTOP, 0, 0, 125, 22, hWnd, (HMENU)IDC_IMG_CHK_RECURSIVE, NULL, NULL);
+            set_font(g_hImgChkRecursive, g_hFont);
+            SendMessage(g_hImgChkRecursive, BM_SETCHECK, BST_CHECKED, 0);
+            register_ctrl(g_hImgCtrls, &g_nImgCtrls, 20, g_hImgChkRecursive);
+
+            g_pfnOrigImgFolderProc = (WNDPROC)SetWindowLongPtrW(g_hImgEditFolder, GWLP_WNDPROC, (LONG_PTR)img_folder_edit_proc);
+
+            g_hImgBtnScan = CreateWindowExW(0, L"BUTTON", i18n_get(STR_IMG_BTN_SCAN),
+                WS_CHILD | BS_DEFPUSHBUTTON | WS_TABSTOP, 0, 0, 95, 26, hWnd, (HMENU)IDC_IMG_BTN_SCAN, NULL, NULL);
+            set_font(g_hImgBtnScan, g_hFontBold);
+            register_ctrl(g_hImgCtrls, &g_nImgCtrls, 20, g_hImgBtnScan);
+
+            /* 2. Notice group & notice text */
+            g_hImgGrpNotice = CreateWindowExW(0, L"BUTTON", i18n_get(STR_IMG_GRP_NOTICE),
+                WS_CHILD | BS_GROUPBOX, 0, 0, 700, 62, hWnd, (HMENU)IDC_IMG_GRP_NOTICE, NULL, NULL);
+            set_font(g_hImgGrpNotice, g_hFontBold);
+            register_ctrl(g_hImgCtrls, &g_nImgCtrls, 20, g_hImgGrpNotice);
+
+            g_hImgNoticeText = CreateWindowExW(0, L"STATIC", i18n_get(STR_IMG_NOTICE_TEXT),
+                WS_CHILD, 0, 0, 680, 38, hWnd, (HMENU)IDC_IMG_NOTICE_TEXT, NULL, NULL);
+            set_font(g_hImgNoticeText, g_hFont);
+            register_ctrl(g_hImgCtrls, &g_nImgCtrls, 20, g_hImgNoticeText);
+
+            /* 3. Output group & controls */
+            g_hImgGrpOutput = CreateWindowExW(0, L"BUTTON", i18n_get(STR_IMG_GRP_OUTPUT),
+                WS_CHILD | BS_GROUPBOX, 0, 0, 700, 56, hWnd, (HMENU)IDC_IMG_GRP_OUTPUT, NULL, NULL);
+            set_font(g_hImgGrpOutput, g_hFontBold);
+            register_ctrl(g_hImgCtrls, &g_nImgCtrls, 20, g_hImgGrpOutput);
+
+            g_hImgLblOutput = CreateWindowExW(0, L"STATIC", i18n_get(STR_IMG_LBL_OUTPUT),
+                WS_CHILD, 0, 0, 110, 20, hWnd, (HMENU)IDC_IMG_LBL_OUTPUT, NULL, NULL);
+            set_font(g_hImgLblOutput, g_hFont);
+            register_ctrl(g_hImgCtrls, &g_nImgCtrls, 20, g_hImgLblOutput);
+
+            g_hImgEditOut = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                WS_CHILD | ES_AUTOHSCROLL | WS_TABSTOP, 0, 0, 300, 24, hWnd, (HMENU)IDC_IMG_EDIT_OUT, NULL, NULL);
+            set_font(g_hImgEditOut, g_hFont);
+            register_ctrl(g_hImgCtrls, &g_nImgCtrls, 20, g_hImgEditOut);
+
+            g_hImgBtnBrowseOut = CreateWindowExW(0, L"BUTTON", i18n_get(STR_IMG_BTN_BROWSE_OUT),
+                WS_CHILD | BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 95, 26, hWnd, (HMENU)IDC_IMG_BTN_BROWSE_OUT, NULL, NULL);
+            set_font(g_hImgBtnBrowseOut, g_hFont);
+            register_ctrl(g_hImgCtrls, &g_nImgCtrls, 20, g_hImgBtnBrowseOut);
+
+            /* 4. Images ListView */
+            g_hImgList = CreateWindowExW(
+                WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
+                WS_CHILD | WS_BORDER | WS_TABSTOP | LVS_REPORT | LVS_SHOWSELALWAYS,
+                0, 0, 700, 250, hWnd, (HMENU)IDC_IMG_LISTVIEW, NULL, NULL
+            );
+            set_font(g_hImgList, g_hFont);
+            ListView_SetExtendedListViewStyle(g_hImgList, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
+            register_ctrl(g_hImgCtrls, &g_nImgCtrls, 20, g_hImgList);
+
+            LVCOLUMNW ic = {0};
+            ic.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
+            ic.cx = 60;  ic.pszText = (LPWSTR)i18n_get(STR_IMG_COL_PAGE);       ListView_InsertColumn(g_hImgList, 0, &ic);
+            ic.cx = 240; ic.pszText = (LPWSTR)i18n_get(STR_IMG_COL_NAME);       ListView_InsertColumn(g_hImgList, 1, &ic);
+            ic.cx = 120; ic.pszText = (LPWSTR)i18n_get(STR_IMG_COL_DIMENSIONS); ListView_InsertColumn(g_hImgList, 2, &ic);
+            ic.cx = 95;  ic.pszText = (LPWSTR)i18n_get(STR_IMG_COL_SIZE);       ListView_InsertColumn(g_hImgList, 3, &ic);
+            ic.cx = 320; ic.pszText = (LPWSTR)i18n_get(STR_IMG_COL_PATH);       ListView_InsertColumn(g_hImgList, 4, &ic);
+
+            /* 5. Progress & Status */
+            g_hImgProgress = CreateWindowExW(0, PROGRESS_CLASSW, NULL,
+                WS_CHILD | PBS_SMOOTH, 0, 0, 700, 14, hWnd, (HMENU)IDC_IMG_PROGRESS, NULL, NULL);
+            register_ctrl(g_hImgCtrls, &g_nImgCtrls, 20, g_hImgProgress);
+
+            g_hImgStaticStatus = CreateWindowExW(0, L"STATIC", i18n_get(STR_IMG_STATUS_READY),
+                WS_CHILD, 0, 0, 700, 20, hWnd, (HMENU)IDC_IMG_STATIC_STATUS, NULL, NULL);
+            set_font(g_hImgStaticStatus, g_hFont);
+            register_ctrl(g_hImgCtrls, &g_nImgCtrls, 20, g_hImgStaticStatus);
+
+            /* 6. Action buttons */
+            g_hImgBtnConvert = CreateWindowExW(0, L"BUTTON", i18n_get(STR_IMG_BTN_CONVERT),
+                WS_CHILD | BS_DEFPUSHBUTTON | WS_TABSTOP, 0, 0, 230, 28, hWnd, (HMENU)IDC_IMG_BTN_CONVERT, NULL, NULL);
+            set_font(g_hImgBtnConvert, g_hFontBold);
+            EnableWindow(g_hImgBtnConvert, FALSE);
+            register_ctrl(g_hImgCtrls, &g_nImgCtrls, 20, g_hImgBtnConvert);
+
+            g_hImgBtnOpenPdf = CreateWindowExW(0, L"BUTTON", i18n_get(STR_IMG_BTN_OPEN_PDF),
+                WS_CHILD | BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 150, 28, hWnd, (HMENU)IDC_IMG_BTN_OPEN_PDF, NULL, NULL);
+            set_font(g_hImgBtnOpenPdf, g_hFont);
+            EnableWindow(g_hImgBtnOpenPdf, FALSE);
+            register_ctrl(g_hImgCtrls, &g_nImgCtrls, 20, g_hImgBtnOpenPdf);
+
+            g_hImgBtnOpenDir = CreateWindowExW(0, L"BUTTON", i18n_get(STR_IMG_BTN_OPEN_DIR),
+                WS_CHILD | BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 140, 28, hWnd, (HMENU)IDC_IMG_BTN_OPEN_DIR, NULL, NULL);
+            set_font(g_hImgBtnOpenDir, g_hFont);
+            EnableWindow(g_hImgBtnOpenDir, FALSE);
+            register_ctrl(g_hImgCtrls, &g_nImgCtrls, 20, g_hImgBtnOpenDir);
+
             /* Initialize localized texts & show initial page */
             update_ui_texts(hWnd);
             show_page(0);
@@ -4238,6 +4717,17 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                     handle_model_context_menu(hWnd, pt.x, pt.y, true);
                     return 0;
                 }
+            } else if (lpnm->hwndFrom == g_hImgList) {
+                if (lpnm->code == NM_DBLCLK) {
+                    int sel = ListView_GetNextItem(g_hImgList, -1, LVNI_SELECTED);
+                    if (sel >= 0 && g_pImgList && sel < (int)g_pImgList->count) {
+                        Img2PdfItem *it = &g_pImgList->items[sel];
+                        if (it->full_path[0] != L'\0') {
+                            ShellExecuteW(hWnd, L"open", it->full_path, NULL, NULL, SW_SHOWNORMAL);
+                        }
+                    }
+                    return 0;
+                }
             }
             break;
         }
@@ -4268,6 +4758,10 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                 if (cur_tab == 0 && g_bAuthenticated) browse_folder_to_edit(hWnd, g_hEditFolder);
                 else if (cur_tab == 1) browse_folder_to_edit(hWnd, g_hRenEditFolder);
                 else if (cur_tab == 2) browse_folder_to_edit(hWnd, g_hDupEditFolder);
+                else if (cur_tab == 4) {
+                    browse_folder_to_edit(hWnd, g_hImgEditFolder);
+                    scan_img2pdf_folder(hWnd);
+                }
             } else if (wmId == IDM_FILE_EXIT || wmId == ID_MAINTRAY_EXIT) {
                 app_exit_completely(hWnd);
                 return 0;
@@ -4283,6 +4777,9 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             } else if (wmId == IDM_VIEW_DUPLICATES) {
                 TabCtrl_SetCurSel(g_hTab, 2);
                 show_page(2);
+            } else if (wmId == IDM_VIEW_IMG2PDF) {
+                TabCtrl_SetCurSel(g_hTab, 4);
+                show_page(4);
             } else if (wmId == IDM_VIEW_MODEL_TESTER) {
                 TabCtrl_SetCurSel(g_hTab, 3);
                 show_page(3);
@@ -4506,6 +5003,34 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                     i18n_get_language() == LANG_ID ? L"Menyelesaikan permintaan saat ini lalu menghentikan pengujian..." :
                                                    L"Finishing the current request, then stopping...");
             }
+
+            /* Page 5 Image to PDF Actions */
+            else if (wmId == IDC_IMG_EDIT_FOLDER && wmEvent == EN_KILLFOCUS) {
+                scan_img2pdf_folder(hWnd);
+            } else if (wmId == IDC_IMG_CHK_RECURSIVE && wmEvent == BN_CLICKED) {
+                scan_img2pdf_folder(hWnd);
+            } else if (wmId == IDC_IMG_BTN_BROWSE && wmEvent == BN_CLICKED) {
+                browse_folder_to_edit(hWnd, g_hImgEditFolder);
+                scan_img2pdf_folder(hWnd);
+            } else if (wmId == IDC_IMG_BTN_SCAN && wmEvent == BN_CLICKED) {
+                scan_img2pdf_folder(hWnd);
+            } else if (wmId == IDC_IMG_BTN_BROWSE_OUT && wmEvent == BN_CLICKED) {
+                browse_save_pdf(hWnd, g_hImgEditOut);
+            } else if (wmId == IDC_IMG_BTN_CONVERT && wmEvent == BN_CLICKED) {
+                start_img2pdf_conversion(hWnd);
+            } else if (wmId == IDC_IMG_BTN_OPEN_PDF && wmEvent == BN_CLICKED) {
+                wchar_t pdfPath[MAX_PATH * 2] = {0};
+                GetWindowTextW(g_hImgEditOut, pdfPath, MAX_PATH * 2);
+                if (pdfPath[0] != L'\0') {
+                    ShellExecuteW(hWnd, L"open", pdfPath, NULL, NULL, SW_SHOWNORMAL);
+                }
+            } else if (wmId == IDC_IMG_BTN_OPEN_DIR && wmEvent == BN_CLICKED) {
+                wchar_t dirPath[MAX_PATH * 2] = {0};
+                GetWindowTextW(g_hImgEditFolder, dirPath, MAX_PATH * 2);
+                if (dirPath[0] != L'\0') {
+                    ShellExecuteW(hWnd, L"open", dirPath, NULL, NULL, SW_SHOWNORMAL);
+                }
+            }
             break;
         }
 
@@ -4534,6 +5059,52 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
                 );
                 SetWindowTextW(g_hModelStatus, status);
                 free(payload);
+            }
+            break;
+        }
+
+        case WM_APP_IMG_PROGRESS: {
+            int current = (int)wParam;
+            int total = (int)lParam;
+            if (g_hImgProgress) {
+                SendMessage(g_hImgProgress, PBM_SETPOS, current, 0);
+            }
+            if (g_hImgStaticStatus) {
+                wchar_t status[256];
+                swprintf(status, 256, i18n_get(STR_IMG_STATUS_CONVERTING), current, total);
+                SetWindowTextW(g_hImgStaticStatus, status);
+            }
+            break;
+        }
+
+        case WM_APP_IMG_FINISHED: {
+            bool ok = (bool)wParam;
+            int pages = (int)lParam;
+            g_bImgConverting = false;
+            if (g_hImgThread) {
+                CloseHandle(g_hImgThread);
+                g_hImgThread = NULL;
+            }
+            EnableWindow(g_hImgBtnConvert, TRUE);
+            EnableWindow(g_hImgBtnScan, TRUE);
+            EnableWindow(g_hImgBtnBrowse, TRUE);
+            EnableWindow(g_hImgBtnBrowseOut, TRUE);
+
+            if (ok) {
+                if (g_hImgProgress) {
+                    SendMessage(g_hImgProgress, PBM_SETPOS, pages, 0);
+                }
+                if (g_hImgStaticStatus) {
+                    wchar_t status[256];
+                    swprintf(status, 256, i18n_get(STR_IMG_STATUS_SUCCESS), pages);
+                    SetWindowTextW(g_hImgStaticStatus, status);
+                }
+                EnableWindow(g_hImgBtnOpenPdf, TRUE);
+                EnableWindow(g_hImgBtnOpenDir, TRUE);
+            } else {
+                if (g_hImgStaticStatus) {
+                    SetWindowTextW(g_hImgStaticStatus, i18n_get(STR_IMG_STATUS_FAILED));
+                }
             }
             break;
         }
@@ -4845,6 +5416,15 @@ LRESULT CALLBACK ui_wnd_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             if (g_hFontTitle) DeleteObject(g_hFontTitle);
             if (g_pRenameList) renamer_free_list(g_pRenameList);
             if (g_pUndoHistory) renamer_free_undo(g_pUndoHistory);
+            g_bImgCancel = true;
+            if (g_pImgList) {
+                img2pdf_free_list(g_pImgList);
+                g_pImgList = NULL;
+            }
+            if (g_hImgThread) {
+                CloseHandle(g_hImgThread);
+                g_hImgThread = NULL;
+            }
             PostQuitMessage(0);
             break;
         }

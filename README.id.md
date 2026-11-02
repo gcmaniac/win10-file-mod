@@ -97,6 +97,13 @@ Semua modul dikompilasi menjadi satu berkas biner mandiri yang sangat ringan tan
 - **Filter harga maksimum**: Filter harga input dan output berlaku pada model yang terlihat; kolom kosong berarti tanpa batas. Model tanpa harga terkait tidak ditampilkan jika batasnya diisi. Uji semua maupun model terpilih hanya menguji daftar hasil filter.
 - **Tambahkan ke VS Code**: Pilih satu model, klik kanan, lalu pilih **Tambahkan Model ke VS Code**. Model ditambahkan ke provider **KiosAPI All** yang sudah ada; entri lain dipertahankan, duplikasi dilewati, dan cadangan bertimestamp dibuat sebelum konfigurasi diperbarui.
 
+### 11. 📄 Penggabung Gambar ke PDF (Folder ke PDF)
+- **Input Lokasi Folder & Pindai Otomatis**: Pilih atau ketik lokasi folder yang berisi berkas gambar; aplikasi akan otomatis mendeteksi dan menampilkan seluruh berkas gambar yang didukung (`.jpg`, `.jpeg`, `.png`, `.bmp`, `.gif`, `.tif`, `.tiff`, `.webp`).
+- **Keterangan Penting Urutan Halaman**: Spanduk petunjuk penting bagi pengguna yang menegaskan bahwa nama berkas gambar di dalam folder harus sudah dinamai dan diurutkan sesuai urutan halaman yang akan menjadi file PDF nantinya (misal: `01.jpg`, `02.png`, `03.jpg`, dst.).
+- **Pengurutan Alami (Natural Logical Sorting)**: Memanfaatkan fungsi Windows `StrCmpLogicalW` sehingga nama seperti `1.jpg`, `2.jpg`, `10.jpg` diurutkan sesuai urutan angka manusia yang benar, bukan urutan abjad ASCII.
+- **Mesin PDF Native ISO 32000-1**: Membangun dokumen PDF 1.4 standar secara murni menggunakan Windows GDI+ tanpa ketergantungan pada runtime atau pustaka eksternal pihak ketiga (0 dependensi pihak ketiga). Otomatis mengompresi stream gambar DCTDecode JPEG kualitas 92% dan menghitung rasio aspek dimensi halaman secara presisi.
+- **Tabel Interaktif & Aksi Cepat**: Menampilkan dimensi resolusi, ukuran berkas, dan lokasi lengkap; klik ganda baris untuk membuka dan meninjau gambar sumber. Klik tombol **Buka File PDF** atau **Buka Folder** langsung setelah proses penggabungan selesai.
+
 ---
 
 ## 📁 Struktur Direktori Proyek

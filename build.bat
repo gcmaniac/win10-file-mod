@@ -20,14 +20,13 @@ echo [BUILD] Compiling application icon and visual manifest (src\resources.rc)..
 windres src\resources.rc -O coff -o src\resources.o
 if %errorlevel% neq 0 (
     echo [ERROR] windres failed to compile resources.rc!
-    pause
     exit /b 1
 )
 
 echo [BUILD] Compiling win10_file_enc.exe with GCC...
-gcc -O2 -Wall -Wextra -municode -mwindows -Iinclude ^
-    src\main.c src\crypto.c src\vault.c src\scanner.c src\shredder.c src\renamer.c src\duplicate.c src\i18n.c src\service.c src\kiosapi_key.c src\model_tester.c src\vscode_model_config.c src\ui.c src\resources.o ^
-    -lbcrypt -lcomctl32 -lshell32 -lole32 -loleaut32 -luuid -lshlwapi -lwinhttp -lsqlite3 ^
+gcc -O2 -Wall -Wextra -municode -mwindows -Iinclude -Llib -L. ^
+    src\main.c src\crypto.c src\vault.c src\scanner.c src\shredder.c src\renamer.c src\duplicate.c src\img2pdf.c src\i18n.c src\service.c src\kiosapi_key.c src\model_tester.c src\vscode_model_config.c src\ui.c src\resources.o ^
+    -lbcrypt -lcomctl32 -lcomdlg32 -lshell32 -lole32 -loleaut32 -luuid -lshlwapi -lwinhttp -lsqlite3 -lgdiplus ^
     -o win10_file_enc.exe
 
 if %errorlevel% equ 0 (
@@ -35,6 +34,5 @@ if %errorlevel% equ 0 (
     echo Binary: %~dp0win10_file_enc.exe
 ) else (
     echo [ERROR] Compilation failed!
-    pause
     exit /b 1
 )
