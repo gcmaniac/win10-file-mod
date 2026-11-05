@@ -128,6 +128,39 @@ static void build_chunk_nonce(const uint8_t base_nonce[GCM_NONCE_SIZE], uint32_t
     *p ^= chunk_idx;
 }
 
+bool crypto_is_file_encrypted(const wchar_t *path) {
+    if (!path || path[0] == L'\0') return false;
+
+    /* Check extension first (.enc or .enc.tmp) */
+    size_t len = wcslen(path);
+    if (len >= 4 && _wcsicmp(path + len - 4, ENC_FILE_EXTENSION) == 0) {
+        return true;
+    }
+    if (len >= 8 && _wcsicmp(path + len - 8, TMP_FILE_EXTENSION) == 0) {
+        return true;
+    }
+
+    /* Check file header for WENC magic bytes and valid header version */
+    HANDLE hFile = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                               NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+
+    FileHeader header;
+    DWORD bytesRead = 0;
+    BOOL readOk = ReadFile(hFile, &header, sizeof(header), &bytesRead, NULL);
+    CloseHandle(hFile);
+
+    if (readOk && bytesRead >= sizeof(FileHeader)) {
+        if (memcmp(header.magic, HEADER_MAGIC, 4) == 0 && header.version == HEADER_VERSION) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool crypto_encrypt_file(
     const wchar_t *src_path,
     const wchar_t *dst_path,
@@ -141,6 +174,7 @@ bool crypto_encrypt_file(
     (void)cipher_id;
     (void)cb;
     (void)user_data;
+    if (crypto_is_file_encrypted(src_path)) return false;
     if (!crypto_init()) return false;
 
     HANDLE hSrc = CreateFileW(src_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);

@@ -57,6 +57,9 @@ bool crypto_decrypt_file_to_memory(
     size_t *out_len
 );
 
+/* Check whether a file is already encrypted (by .enc extension or WENC header) */
+bool crypto_is_file_encrypted(const wchar_t *path);
+
 #ifdef __cplusplus
 }
 #endif

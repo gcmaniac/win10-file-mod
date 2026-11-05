@@ -1138,7 +1138,7 @@ static void populate_explorer_list(HWND hList, const wchar_t *folder_path) {
                     data->is_directory = false;
                     data->ftModified = ffd.ftLastWriteTime;
                     const wchar_t *ext = wcsrchr(ffd.cFileName, L'.');
-                    if (ext && _wcsicmp(ext, ENC_FILE_EXTENSION) == 0) {
+                    if ((ext && _wcsicmp(ext, ENC_FILE_EXTENSION) == 0) || crypto_is_file_encrypted(full_item)) {
                         wcsncpy(data->status, i18n_get(STR_STATUS_ENCRYPTED_ENC), 63);
                     } else if (tracker_is_file_decrypted(full_item)) {
                         wcsncpy(data->status, i18n_get(STR_STATUS_DECRYPTED_LOCK), 63);
@@ -1253,10 +1253,16 @@ static DWORD WINAPI encrypt_worker_thread(LPVOID lpParam) {
 
         wchar_t msg[512];
 
-        /* Skip if already .enc */
-        size_t slen = wcslen(src_file);
-        if (slen > 4 && _wcsicmp(src_file + slen - 4, ENC_FILE_EXTENSION) == 0) {
-            fail_count++;
+        /* Skip if file has already been encrypted */
+        if (crypto_is_file_encrypted(src_file)) {
+            const wchar_t *fn = wcsrchr(src_file, L'\\');
+            fn = fn ? fn + 1 : src_file;
+            swprintf(msg, 512,
+                (i18n_get_language() == LANG_ID) ?
+                L"[LEWATI] Berkas telah dienkripsi: %ls" :
+                L"[SKIP] File is already encrypted: %ls",
+                fn);
+            PostMessageW(hWnd, WM_APP_LOG_MSG, 0, (LPARAM)_wcsdup(msg));
             continue;
         }
 
@@ -1328,13 +1334,19 @@ static void start_encryption_processing(HWND hWnd) {
     SetWindowTextW(g_hEditFolder, folder);
 
     if (wcslen(folder) == 0) {
-        MessageBoxW(hWnd, L"Silakan pilih folder target terlebih dahulu!", L"Peringatan", MB_OK | MB_ICONWARNING);
+        MessageBoxW(hWnd,
+            (i18n_get_language() == LANG_ID) ? L"Silakan pilih folder target terlebih dahulu!" : L"Please select a target folder first!",
+            (i18n_get_language() == LANG_ID) ? L"Peringatan" : L"Warning",
+            MB_OK | MB_ICONWARNING);
         return;
     }
 
     DWORD attribs = GetFileAttributesW(folder);
     if (attribs == INVALID_FILE_ATTRIBUTES || !(attribs & FILE_ATTRIBUTE_DIRECTORY)) {
-        MessageBoxW(hWnd, L"Folder target tidak valid atau tidak ditemukan!", L"Peringatan", MB_OK | MB_ICONWARNING);
+        MessageBoxW(hWnd,
+            (i18n_get_language() == LANG_ID) ? L"Folder target tidak valid atau tidak ditemukan!" : L"Target folder is invalid or could not be found!",
+            (i18n_get_language() == LANG_ID) ? L"Peringatan" : L"Warning",
+            MB_OK | MB_ICONWARNING);
         return;
     }
 
@@ -1346,32 +1358,95 @@ static void start_encryption_processing(HWND hWnd) {
 
     const wchar_t *session_pass = vault_get_session_password();
     if (!session_pass || wcslen(session_pass) == 0) {
-        MessageBoxW(hWnd, L"Sesi autentikasi telah berakhir! Silakan masuk kembali.", L"Peringatan", MB_OK | MB_ICONWARNING);
+        MessageBoxW(hWnd,
+            (i18n_get_language() == LANG_ID) ? L"Sesi autentikasi telah berakhir! Silakan masuk kembali." : L"Authentication session expired! Please log in again.",
+            (i18n_get_language() == LANG_ID) ? L"Peringatan" : L"Warning",
+            MB_OK | MB_ICONWARNING);
         g_bAuthenticated = false;
         clear_kiosapi_key();
         show_page(0);
         return;
     }
 
+    /* Pre-scan target folder to filter out already encrypted files */
+    bool recursive = (SendMessage(g_hChkRecursive, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    FileList *folder_files = scanner_create();
+    if (!folder_files || !scanner_scan(folder, recursive, OP_MODE_ENCRYPT_AND_SHRED, folder_files)) {
+        if (folder_files) scanner_free(folder_files);
+        MessageBoxW(hWnd,
+            (i18n_get_language() == LANG_ID) ? L"Gagal memindai folder target." : L"Failed to scan target folder.",
+            i18n_get(STR_APP_TITLE), MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    scanner_filter_files(folder_files, file_type_filter, max_file_size_bytes);
+
+    if (folder_files->count == 0) {
+        MessageBoxW(hWnd,
+            (i18n_get_language() == LANG_ID) ?
+            L"Tidak ada berkas di dalam folder ini yang perlu dienkripsi.\n\n(Semua berkas telah dienkripsi atau disaring)." :
+            L"No files in this folder need encryption.\n\n(All files are already encrypted or filtered out).",
+            (i18n_get_language() == LANG_ID) ? L"Informasi Enkripsi Folder" : L"Folder Encryption Info",
+            MB_OK | MB_ICONINFORMATION);
+        scanner_free(folder_files);
+        return;
+    }
+
+    /* Confirm folder encryption */
+    wchar_t prompt[1024];
+    if (i18n_get_language() == LANG_ID) {
+        swprintf(prompt, 1024,
+            L"Apakah Anda yakin ingin mengenkripsi folder ini?\n\n"
+            L"Folder: %ls\n"
+            L"Jumlah berkas yang akan dienkripsi: %zu berkas\n\n"
+            L"(Berkas yang telah dienkripsi akan dilewati secara otomatis.\n"
+            L"Berkas asli akan dimusnahkan secara aman setelah dienkripsi AES-256-GCM)",
+            folder, folder_files->count);
+    } else {
+        swprintf(prompt, 1024,
+            L"Are you sure you want to encrypt this folder?\n\n"
+            L"Folder: %ls\n"
+            L"Files to be encrypted: %zu file(s)\n\n"
+            L"(Already encrypted files will be skipped automatically.\n"
+            L"Original files will be securely shredded after AES-256-GCM encryption)",
+            folder, folder_files->count);
+    }
+
+    int res = MessageBoxW(
+        hWnd,
+        prompt,
+        (i18n_get_language() == LANG_ID) ? L"Konfirmasi Enkripsi Folder" : L"Confirm Folder Encryption",
+        MB_YESNO | MB_ICONQUESTION
+    );
+
+    if (res != IDYES) {
+        scanner_free(folder_files);
+        return;
+    }
+
     WorkerParams *wp = (WorkerParams *)malloc(sizeof(WorkerParams));
-    if (!wp) return;
+    if (!wp) {
+        scanner_free(folder_files);
+        return;
+    }
 
     wcsncpy(wp->config.folder_path, folder, MAX_PATH * 2 - 1);
-    wp->config.recursive = (SendMessage(g_hChkRecursive, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    wp->config.recursive = recursive;
     wp->config.op_mode = OP_MODE_ENCRYPT_AND_SHRED;
     wp->config.cipher_id = CIPHER_AES_256_GCM;
     vault_get_recovery_email(wp->config.email, 255);
     wp->hWnd = hWnd;
-    wp->custom_files = NULL;
+    wp->custom_files = folder_files;
     wp->file_type_filter = file_type_filter;
     wp->max_file_size_bytes = max_file_size_bytes;
 
     g_bIsWorking = true;
     g_bCancelRequested = false;
 
-    SendMessage(g_hProgress, PBM_SETRANGE32, 0, 100);
+    SendMessage(g_hProgress, PBM_SETRANGE32, 0, (LPARAM)folder_files->count);
     SendMessage(g_hProgress, PBM_SETPOS, 0, 0);
-    SetWindowTextW(g_hStaticStatus, L"Memproses enkripsi & pemusnahan file asli...");
+    SetWindowTextW(g_hStaticStatus,
+        (i18n_get_language() == LANG_ID) ? L"Memproses enkripsi & pemusnahan berkas asli..." : L"Processing encryption & shredding original files...");
 
     g_hWorkerThread = CreateThread(NULL, 0, encrypt_worker_thread, wp, 0, NULL);
 }
@@ -1445,8 +1520,7 @@ static void encrypt_selected_files(HWND hWnd) {
         if (wcscmp(sz_type, L"<Folder>") == 0) {
             scanner_scan(full_path, SendMessage(g_hChkRecursive, BM_GETCHECK, 0, 0) == BST_CHECKED, OP_MODE_ENCRYPT_AND_SHRED, custom_files);
         } else {
-            const wchar_t *ext = wcsrchr(name, L'.');
-            if (!ext || _wcsicmp(ext, ENC_FILE_EXTENSION) != 0) {
+            if (!crypto_is_file_encrypted(full_path)) {
                 scanner_add_file(custom_files, full_path, 0);
             }
         }
@@ -1457,8 +1531,8 @@ static void encrypt_selected_files(HWND hWnd) {
         MessageBoxW(
             hWnd,
             (i18n_get_language() == LANG_ID) ?
-            L"Tidak ada berkas yang cocok dengan filter tipe file dan ukuran maksimum." :
-            L"No files match the selected file-type and maximum-size filters.",
+            L"Tidak ada berkas yang perlu dienkripsi (semua berkas yang dipilih telah dienkripsi atau disaring)." :
+            L"No files need encryption (all selected files are already encrypted or filtered out).",
             i18n_get(STR_APP_TITLE),
             MB_OK | MB_ICONINFORMATION
         );
@@ -1470,12 +1544,14 @@ static void encrypt_selected_files(HWND hWnd) {
     if (i18n_get_language() == LANG_ID) {
         swprintf(prompt, 512,
             L"Apakah Anda yakin ingin mengenkripsi %zu berkas yang dipilih?\n\n"
-            L"(Berkas asli akan dimusnahkan secara aman setelah dienkripsi AES-256-GCM)",
+            L"(Berkas yang telah dienkripsi akan dilewati secara otomatis.\n"
+            L"Berkas asli akan dimusnahkan secara aman setelah dienkripsi AES-256-GCM)",
             custom_files->count);
     } else {
         swprintf(prompt, 512,
             L"Are you sure you want to encrypt %zu selected file(s)?\n\n"
-            L"(Original files will be securely shredded after AES-256-GCM encryption)",
+            L"(Already encrypted files will be skipped automatically.\n"
+            L"Original files will be securely shredded after AES-256-GCM encryption)",
             custom_files->count);
     }
 

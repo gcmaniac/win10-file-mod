@@ -461,8 +461,7 @@ bool service_auto_encrypt_single_file(const wchar_t *plain_path) {
         return false;
     }
 
-    const wchar_t *ext = wcsrchr(plain_path, L'.');
-    if (ext && _wcsicmp(ext, ENC_FILE_EXTENSION) == 0) {
+    if (crypto_is_file_encrypted(plain_path)) {
         return true; /* Already encrypted */
     }
 

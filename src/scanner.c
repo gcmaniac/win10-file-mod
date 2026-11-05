@@ -48,6 +48,28 @@ static bool ends_with(const wchar_t *str, const wchar_t *suffix) {
     return (_wcsicmp(str + str_len - suffix_len, suffix) == 0);
 }
 
+static bool is_file_already_encrypted(const wchar_t *file_name, const wchar_t *full_path) {
+    if (!file_name || !full_path) return false;
+    if (ends_with(file_name, ENC_FILE_EXTENSION) || ends_with(file_name, TMP_FILE_EXTENSION)) {
+        return true;
+    }
+    HANDLE hFile = CreateFileW(full_path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                               NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) return false;
+
+    FileHeader header;
+    DWORD bytesRead = 0;
+    BOOL readOk = ReadFile(hFile, &header, sizeof(header), &bytesRead, NULL);
+    CloseHandle(hFile);
+
+    if (readOk && bytesRead >= sizeof(FileHeader)) {
+        if (memcmp(header.magic, HEADER_MAGIC, 4) == 0 && header.version == HEADER_VERSION) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool extension_in_list(const wchar_t *extension, const wchar_t *const *extensions, size_t count) {
     for (size_t i = 0; i < count; i++) {
         if (_wcsicmp(extension, extensions[i]) == 0) return true;
@@ -188,13 +210,13 @@ static void scan_recursive_internal(
             fSize.HighPart = find_data.nFileSizeHigh;
 
             if (mode == OP_MODE_ENCRYPT_AND_SHRED) {
-                /* When encrypting, only include files that are NOT already .enc */
-                if (!ends_with(find_data.cFileName, ENC_FILE_EXTENSION)) {
+                /* When encrypting, exclude files that have already been encrypted */
+                if (!is_file_already_encrypted(find_data.cFileName, full_path)) {
                     scanner_add_file(list, full_path, fSize.QuadPart);
                 }
             } else if (mode == OP_MODE_DECRYPT) {
-                /* When decrypting, only include files that ARE .enc */
-                if (ends_with(find_data.cFileName, ENC_FILE_EXTENSION)) {
+                /* When decrypting, only include files that are encrypted */
+                if (is_file_already_encrypted(find_data.cFileName, full_path)) {
                     scanner_add_file(list, full_path, fSize.QuadPart);
                 }
             }
